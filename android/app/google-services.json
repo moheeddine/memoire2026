@@ -1,0 +1,46 @@
+{
+  "project_info": {
+    "project_number": "717678124764",
+    "project_id": "memoire2026-467c9",
+    "storage_bucket": "memoire2026-467c9.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:717678124764:android:c1dad437160f92d5f91e19",
+        "android_client_info": {
+          "package_name": "com.example.memoire2026"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "717678124764-out08mvdjrfu2fqcde6akpc7b7g9dbt0.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDo4CsPqB8BxHtuhTxFep0qUVnJw88ID4g"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "717678124764-out08mvdjrfu2fqcde6akpc7b7g9dbt0.apps.googleusercontent.com",
+              "client_type": 3
+            },
+            {
+              "client_id": "717678124764-dpjb6q6800otdvmbkkrcrc6hc44jdql8.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "com.example.memoire2026"
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
