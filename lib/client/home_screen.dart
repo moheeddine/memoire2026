@@ -1,576 +1,314 @@
-import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:geolocator/geolocator.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
-import 'promo_detail_screen.dart';
 import 'package:url_launcher/url_launcher.dart';
-import 'profile_screen.dart';
-
-// ─── COLORS ────────────────────────────────────────────────────────────────
-const kPrimary       = Color(0xFF7C3AED); // purple-600
-const kPrimaryLight  = Color(0xFFEDE9FE); // purple-100
-const kPrimaryFaint  = Color(0xFFF5F0FF); // page bg
-const kAccentOrange  = Color(0xFFEA580C);
-const kTextDark      = Color(0xFF1E1B4B);
-const kTextMuted     = Color(0xFF6B7280);
-const kBorder        = Color(0xFFEDE9FE);
-const kWhite         = Colors.white;
-// ───────────────────────────────────────────────────────────────────────────
+import '../theme/app_theme.dart';
+import '../models/promo_model.dart';
+import '../services/auth_service.dart';
+import '../services/promo_service.dart';
+import '../services/business_service.dart';
+import '../services/favorite_service.dart';
+import '../services/recommendation_service.dart';
+import '../widgets/client_navbar.dart';
+import 'promo_detail_screen.dart';
 
 class HomeScreen extends StatefulWidget {
+  const HomeScreen({super.key});
+
   @override
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
-Map<String, String> favorites = {};
-
 class _HomeScreenState extends State<HomeScreen> {
-  int selectedCategory = 0;
-  Map? selectedPromo;
+  int    _selectedCat    = 0;
+  String _searchQuery    = '';
+  Map?   _selectedMarker;
 
-  List<String> categories = ["Tous"];
-  String searchQuery = "";
-  int currentIndex = 0;
+  List<String>      _categories      = ['Tous'];
+  List<PromoModel>  _recommendations = [];
+  Set<String>       _favBusinessIds  = {};
+  List<Marker>      _markers         = [];
+  String            _userName        = '';
 
-  LatLng center = LatLng(35.0382, 9.4849);
-
-  List<Marker> firestoreMarkers = [];
-  List<Map<String, dynamic>> aiList = [];
+  LatLng _center = const LatLng(35.0382, 9.4849);
 
   @override
   void initState() {
     super.initState();
-    loadAI();
-    loadFavorites();
-    loadCategories();
-    getLocation();
-    loadEntreprises();
+    _loadUser();
+    _loadCategories();
+    _getLocation();
   }
 
-  void loadAI() async {
-    final snapshot = await FirebaseFirestore.instance
-        .collection('promos')
-        .where('status', isEqualTo: 'approved')
-        .get();
-
-    List<Map<String, dynamic>> temp = [];
-
-    for (var doc in snapshot.docs) {
-      final data = doc.data();
-      if (data['lat'] == null || data['lng'] == null) continue;
-
-      double dist = Geolocator.distanceBetween(
-        center.latitude,
-        center.longitude,
-        data['lat'],
-        data['lng'],
-      );
-
-      data['distance'] = dist;
-      temp.add(data);
+  Future<void> _loadUser() async {
+    final u = await AuthService.getCurrentUserData();
+    if (mounted && u != null) {
+      setState(() => _userName = u.name.split(' ').first);
     }
-
-    temp.sort((a, b) => a['distance'].compareTo(b['distance']));
-
-    setState(() {
-      aiList = temp.take(4).toList();
-    });
+    _loadFavs();
   }
 
-  void getLocation() async {
-    final permission = await Geolocator.requestPermission();
-
-    if (permission == LocationPermission.whileInUse ||
-        permission == LocationPermission.always) {
-      final pos = await Geolocator.getCurrentPosition();
-      setState(() => center = LatLng(pos.latitude, pos.longitude));
-      loadAI();
-      loadEntreprises();
-    }
+  Future<void> _loadFavs() async {
+    final uid = AuthService.currentUid;
+    if (uid == null) return;
+    final ids = await FavoriteService.getFavoriteBusinessIds(uid);
+    if (mounted) setState(() => _favBusinessIds = ids);
   }
 
-  void loadCategories() async {
-    final snapshot = await FirebaseFirestore.instance
-        .collection('users')
-        .where('role', isEqualTo: 'entreprise')
-        .where('status', isEqualTo: 'active')
-        .get();
-
-    Set<String> cats = {"Tous"};
-    for (var doc in snapshot.docs) {
-      final data = doc.data();
-      if (data['cat'] != null) cats.add(data['cat']);
-    }
-
-    setState(() => categories = cats.toList()..sort());
+  Future<void> _loadCategories() async {
+    final cats = await BusinessService.getCategories();
+    if (mounted) setState(() => _categories = ['Tous', ...cats]);
   }
 
-  void loadEntreprises() async {
-    final snapshot = await FirebaseFirestore.instance
-        .collection('users')
-        .where('role', isEqualTo: 'entreprise')
-        .where('status', isEqualTo: 'active')
-        .get();
-
-    List<Marker> markers = [];
-
-    for (var doc in snapshot.docs) {
-      final data = doc.data();
-      if (data['lat'] == null || data['lng'] == null) continue;
-      if (selectedCategory != 0 &&
-          data['cat'] != categories[selectedCategory]) continue;
-      if (searchQuery.isNotEmpty &&
-          !(data['commerceName'] ?? "")
-              .toLowerCase()
-              .contains(searchQuery.toLowerCase())) continue;
-
-      LatLng point = LatLng(
-        (data['lat'] as num).toDouble(),
-        (data['lng'] as num).toDouble(),
-      );
-
-      double distance = Geolocator.distanceBetween(
-        center.latitude,
-        center.longitude,
-        point.latitude,
-        point.longitude,
-      );
-
-      markers.add(
-        Marker(
-          point: point,
-          width: 56,
-          height: 56,
-          child: GestureDetector(
-            onTap: () {
-              setState(() {
-                selectedPromo = {
-                  "name": data['commerceName'],
-                  "desc": data['cat'],
-                  "lat": point.latitude,
-                  "lng": point.longitude,
-                  "distance": (distance / 1000).toStringAsFixed(2),
-                };
-              });
-            },
-            child: _AnimatedMarker(icon: getIconByCategory(data['cat'])),
-          ),
-        ),
-      );
-    }
-
-    setState(() => firestoreMarkers = markers);
-  }
-
-  void openMap(double lat, double lng) async {
-    final Uri url = Uri.parse(
-      "https://www.google.com/maps/search/?api=1&query=$lat,$lng",
-    );
-    if (!await launchUrl(url, mode: LaunchMode.externalApplication)) {
-      throw 'Could not open map';
-    }
-  }
-
-  void toggleFavorite(String itemId, String type) async {
-    final userId = FirebaseAuth.instance.currentUser!.uid;
-    final favRef = FirebaseFirestore.instance.collection('favorites');
-
-    if (favorites.containsKey(itemId)) {
-      final snapshot = await favRef
-          .where('userId', isEqualTo: userId)
-          .where('itemId', isEqualTo: itemId)
-          .get();
-      for (var doc in snapshot.docs) {
-        await doc.reference.delete();
+  Future<void> _getLocation() async {
+    try {
+      LocationPermission perm = await Geolocator.checkPermission();
+      if (perm == LocationPermission.denied) {
+        perm = await Geolocator.requestPermission();
       }
-      setState(() => favorites.remove(itemId));
-    } else {
-      await favRef.add({"userId": userId, "itemId": itemId, "type": type});
-      setState(() => favorites[itemId] = type);
-    }
+      if (perm == LocationPermission.always ||
+          perm == LocationPermission.whileInUse) {
+        final pos = await Geolocator.getCurrentPosition();
+        if (mounted) setState(() => _center = LatLng(pos.latitude, pos.longitude));
+      }
+    } catch (_) {}
+    await _loadRecommendations();
+    await _loadMarkers();
   }
 
-  void loadFavorites() async {
-    final userId = FirebaseAuth.instance.currentUser!.uid;
-    final snapshot = await FirebaseFirestore.instance
-        .collection('favorites')
-        .where('userId', isEqualTo: userId)
-        .get();
-
-    setState(() {
-      favorites = {for (var doc in snapshot.docs) doc['itemId']: doc['type']};
-    });
+  Future<void> _loadRecommendations() async {
+    final uid = AuthService.currentUid;
+    if (uid == null) return;
+    try {
+      final recs = await RecommendationService.getRecommendations(
+        userId: uid, userLat: _center.latitude, userLng: _center.longitude,
+      );
+      if (mounted) setState(() => _recommendations = recs);
+    } catch (_) {}
   }
 
-  IconData getIconByCategory(String? cat) {
+  Future<void> _loadMarkers() async {
+    try {
+      final businesses = await BusinessService.getActiveBusinesses();
+      final markers = <Marker>[];
+      for (final b in businesses) {
+        if (_selectedCat != 0 && b.category != _categories[_selectedCat]) continue;
+        if (_searchQuery.isNotEmpty &&
+            !b.name.toLowerCase().contains(_searchQuery.toLowerCase())) continue;
+        final pt = LatLng(b.lat, b.lng);
+        final dist = Geolocator.distanceBetween(
+          _center.latitude, _center.longitude, pt.latitude, pt.longitude);
+        markers.add(Marker(
+          point: pt, width: 56, height: 56,
+          child: GestureDetector(
+            onTap: () => setState(() => _selectedMarker = {
+              'id': b.uid, 'name': b.name, 'desc': b.category,
+              'lat': pt.latitude, 'lng': pt.longitude,
+              'distance': (dist / 1000).toStringAsFixed(2),
+            }),
+            child: _AnimatedMarker(icon: _catIcon(b.category)),
+          ),
+        ));
+      }
+      if (mounted) setState(() => _markers = markers);
+    } catch (_) {}
+  }
+
+  Future<void> _toggleFav(String businessId) async {
+    final uid = AuthService.currentUid;
+    if (uid == null) return;
+    await FavoriteService.toggleBusinessFavorite(uid, businessId);
+    final ids = await FavoriteService.getFavoriteBusinessIds(uid);
+    if (mounted) setState(() => _favBusinessIds = ids);
+  }
+
+  Future<void> _openMap(double lat, double lng) async {
+    final uri = Uri.parse(
+        'https://www.google.com/maps/search/?api=1&query=$lat,$lng');
+    await launchUrl(uri, mode: LaunchMode.externalApplication);
+  }
+
+  IconData _catIcon(String? cat) {
     switch (cat) {
-      case "café":      return Icons.coffee;
-      case "resto":     return Icons.restaurant;
-      case "vetement":  return Icons.checkroom;
-      case "reparation":return Icons.build;
-      case "publinet":  return Icons.computer;
-      case "librairie": return Icons.menu_book;
-      default:          return Icons.store;
+      case 'café':       return Icons.coffee_rounded;
+      case 'resto':      return Icons.restaurant_rounded;
+      case 'vetement':   return Icons.checkroom_rounded;
+      case 'reparation': return Icons.build_rounded;
+      case 'publinet':   return Icons.computer_rounded;
+      case 'librairie':  return Icons.menu_book_rounded;
+      default:           return Icons.store_rounded;
     }
   }
 
-  // ─── NAV ITEM ─────────────────────────────────────────────────────────────
-  Widget navItem(IconData icon, String label, int index, BuildContext context) {
-    bool isActive = currentIndex == index;
-
-    return GestureDetector(
-      onTap: () {
-        setState(() => currentIndex = index);
-        if (index == 4) {
-          Navigator.push(
-            context,
-            MaterialPageRoute(builder: (_) => ProfileScreen()),
-          );
-        }
-      },
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          AnimatedContainer(
-            duration: Duration(milliseconds: 200),
-            width: 42,
-            height: 42,
-            decoration: BoxDecoration(
-              color: isActive ? kPrimaryLight : Colors.transparent,
-              borderRadius: BorderRadius.circular(14),
-            ),
-            child: Icon(
-              icon,
-              color: isActive ? kPrimary : kTextMuted,
-              size: 22,
-            ),
-          ),
-          SizedBox(height: 2),
-          Text(
-            label,
-            style: TextStyle(
-              fontSize: 10,
-              color: isActive ? kPrimary : kTextMuted,
-              fontWeight: isActive ? FontWeight.w600 : FontWeight.normal,
-            ),
-          ),
-        ],
-      ),
-    );
+  String _catEmoji(String cat) {
+    switch (cat.toLowerCase()) {
+      case 'tous':       return '🏷️';
+      case 'café':       return '☕';
+      case 'resto':      return '🍽️';
+      case 'vetement':   return '👗';
+      case 'reparation': return '🔧';
+      case 'publinet':   return '💻';
+      case 'librairie':  return '📚';
+      default:           return '🏷️';
+    }
   }
 
-  // ─── BUILD ────────────────────────────────────────────────────────────────
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: kPrimaryFaint,
+      backgroundColor: AppColors.bg,
       body: SafeArea(
         child: ListView(
-          padding: EdgeInsets.symmetric(horizontal: 20),
+          padding: EdgeInsets.zero,
           children: [
-            SizedBox(height: 16),
-
-            // ── HEADER ──────────────────────────────────────────────────────
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      "Bonjour, Yasmine 👋",
-                      style: TextStyle(
-                        color: kTextDark,
-                        fontSize: 18,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                    SizedBox(height: 3),
-                    Row(
-                      children: [
-                        Icon(Icons.location_on, size: 13, color: kPrimary),
-                        SizedBox(width: 3),
-                        Text(
-                          "Tunis · 14 promos près de vous",
-                          style: TextStyle(color: kPrimary, fontSize: 12),
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
-                // Notification bell
-                Stack(
-                  children: [
-                    Container(
-                      width: 42,
-                      height: 42,
-                      decoration: BoxDecoration(
-                        color: kWhite,
-                        shape: BoxShape.circle,
-                        border: Border.all(color: kBorder),
-                      ),
-                      child: Icon(Icons.notifications_outlined,
-                          color: kPrimary, size: 20),
-                    ),
-                    Positioned(
-                      top: 8,
-                      right: 8,
-                      child: Container(
-                        width: 9,
-                        height: 9,
-                        decoration: BoxDecoration(
-                          color: kPrimary,
-                          shape: BoxShape.circle,
-                          border: Border.all(color: kWhite, width: 1.5),
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ],
-            ),
-
-            SizedBox(height: 20),
-
-            // ── MAP ─────────────────────────────────────────────────────────
+            // ── Gradient header ──────────────────────────────────────────
             Container(
-              height: 200,
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(24),
-                border: Border.all(color: kBorder),
+              padding: const EdgeInsets.fromLTRB(20, 20, 20, 28),
+              decoration: const BoxDecoration(
+                gradient: AppColors.mainGradient,
+                borderRadius: BorderRadius.only(
+                  bottomLeft: Radius.circular(32),
+                  bottomRight: Radius.circular(32),
+                ),
               ),
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(24),
-                child: GestureDetector(
-                  onTap: () => setState(() => selectedPromo = null),
-                  child: Stack(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      FlutterMap(
-                        options: MapOptions(
-                          initialCenter: center,
-                          initialZoom: 14,
-                        ),
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          TileLayer(
-                            urlTemplate:
-                                "https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}",
+                          Text(
+                            'Bonjour, $_userName 👋',
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 20,
+                              fontWeight: FontWeight.w700,
+                            ),
                           ),
-                          MarkerLayer(
-                            markers: [
-                              Marker(
-                                point: center,
-                                width: 36,
-                                height: 36,
-                                child: Container(
-                                  decoration: BoxDecoration(
-                                    color: Color(0xFF2563EB),
-                                    shape: BoxShape.circle,
-                                    border: Border.all(
-                                        color: kWhite, width: 2.5),
-                                  ),
-                                  child: Icon(Icons.my_location,
-                                      color: kWhite, size: 16),
+                          const SizedBox(height: 3),
+                          Row(
+                            children: [
+                              Icon(Icons.location_on,
+                                  size: 13,
+                                  color: Colors.white.withValues(alpha: 0.8)),
+                              const SizedBox(width: 3),
+                              Text(
+                                'Promos près de vous',
+                                style: TextStyle(
+                                  color: Colors.white.withValues(alpha: 0.8),
+                                  fontSize: 13,
                                 ),
                               ),
-                              ...firestoreMarkers,
                             ],
                           ),
                         ],
                       ),
-
-                      // POPUP
-                      if (selectedPromo != null)
-                        Positioned(
-                          bottom: 12,
-                          left: 12,
-                          right: 12,
-                          child: Container(
-                            padding: EdgeInsets.all(14),
-                            decoration: BoxDecoration(
-                              color: kWhite,
-                              borderRadius: BorderRadius.circular(18),
-                              border: Border.all(color: kBorder),
-                              boxShadow: [
-                                BoxShadow(
-                                  color: kPrimary.withOpacity(0.10),
-                                  blurRadius: 16,
-                                  offset: Offset(0, 4),
-                                )
-                              ],
-                            ),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  selectedPromo!["name"],
-                                  style: TextStyle(
-                                    color: kTextDark,
-                                    fontWeight: FontWeight.w600,
-                                    fontSize: 14,
-                                  ),
-                                ),
-                                SizedBox(height: 3),
-                                Text(
-                                  selectedPromo!["desc"],
-                                  style: TextStyle(
-                                      color: kTextMuted, fontSize: 12),
-                                ),
-                                SizedBox(height: 3),
-                                Row(
-                                  children: [
-                                    Icon(Icons.location_on,
-                                        size: 12, color: kPrimary),
-                                    SizedBox(width: 3),
-                                    Text(
-                                      "${selectedPromo!["distance"]} km",
-                                      style: TextStyle(
-                                          color: kPrimary,
-                                          fontSize: 12,
-                                          fontWeight: FontWeight.w500),
-                                    ),
-                                  ],
-                                ),
-                                SizedBox(height: 10),
-                                Row(
-                                  children: [
-                                    Expanded(
-                                      child: ElevatedButton(
-                                        onPressed: () => openMap(
-                                          selectedPromo!["lat"],
-                                          selectedPromo!["lng"],
-                                        ),
-                                        style: ElevatedButton.styleFrom(
-                                          backgroundColor: kPrimary,
-                                          foregroundColor: kWhite,
-                                          elevation: 0,
-                                          shape: RoundedRectangleBorder(
-                                            borderRadius:
-                                                BorderRadius.circular(12),
-                                          ),
-                                          padding: EdgeInsets.symmetric(
-                                              vertical: 10),
-                                        ),
-                                        child: Text("Aller",
-                                            style:
-                                                TextStyle(fontSize: 13)),
-                                      ),
-                                    ),
-                                    SizedBox(width: 10),
-                                    Container(
-                                      width: 40,
-                                      height: 40,
-                                      decoration: BoxDecoration(
-                                        color: Colors.red.shade50,
-                                        borderRadius:
-                                            BorderRadius.circular(12),
-                                        border: Border.all(
-                                            color: Colors.red.shade100),
-                                      ),
-                                      child: IconButton(
-                                        padding: EdgeInsets.zero,
-                                        onPressed: () => toggleFavorite(
-                                          selectedPromo!["name"],
-                                          "entreprise",
-                                        ),
-                                        icon: Icon(
-                                          favorites.containsKey(
-                                                  selectedPromo!["name"])
-                                              ? Icons.favorite
-                                              : Icons.favorite_border,
-                                          color: Colors.red,
-                                          size: 18,
-                                        ),
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ],
-                            ),
-                          ),
+                      // Notification icon
+                      Container(
+                        width: 44,
+                        height: 44,
+                        decoration: BoxDecoration(
+                          color: Colors.white.withValues(alpha: 0.2),
+                          borderRadius: BorderRadius.circular(14),
                         ),
-                    ],
-                  ),
-                ),
-              ),
-            ),
-
-            SizedBox(height: 18),
-
-            // ── SEARCH ──────────────────────────────────────────────────────
-            Container(
-              decoration: BoxDecoration(
-                color: kWhite,
-                borderRadius: BorderRadius.circular(30),
-                border: Border.all(color: kBorder),
-                boxShadow: [
-                  BoxShadow(
-                    color: kPrimary.withOpacity(0.06),
-                    blurRadius: 10,
-                    offset: Offset(0, 2),
-                  )
-                ],
-              ),
-              child: TextField(
-                onChanged: (val) {
-                  searchQuery = val;
-                  loadEntreprises();
-                },
-                style: TextStyle(color: kTextDark, fontSize: 14),
-                decoration: InputDecoration(
-                  hintText: "Rechercher une promo, un commerce...",
-                  hintStyle: TextStyle(color: Color(0xFFC4B5FD), fontSize: 13),
-                  prefixIcon:
-                      Icon(Icons.search, color: kPrimary, size: 20),
-                  suffixIcon: Container(
-                    margin: EdgeInsets.all(8),
-                    decoration: BoxDecoration(
-                      color: kPrimaryLight,
-                      borderRadius: BorderRadius.circular(20),
-                    ),
-                    child: Icon(Icons.add, color: kPrimary, size: 18),
-                  ),
-                  border: InputBorder.none,
-                  contentPadding:
-                      EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-                ),
-              ),
-            ),
-
-            SizedBox(height: 16),
-
-            // ── CATEGORIES ──────────────────────────────────────────────────
-            SizedBox(
-              height: 38,
-              child: ListView.builder(
-                scrollDirection: Axis.horizontal,
-                itemCount: categories.length,
-                itemBuilder: (_, i) {
-                  bool selected = selectedCategory == i;
-                  return GestureDetector(
-                    onTap: () {
-                      setState(() => selectedCategory = i);
-                      loadEntreprises();
-                    },
-                    child: AnimatedContainer(
-                      duration: Duration(milliseconds: 200),
-                      margin: EdgeInsets.only(right: 8),
-                      padding: EdgeInsets.symmetric(
-                          horizontal: 18, vertical: 9),
-                      decoration: BoxDecoration(
-                        color: selected ? kPrimary : kWhite,
-                        borderRadius: BorderRadius.circular(20),
-                        border: Border.all(
-                          color: selected ? kPrimary : kBorder,
+                        child: const Icon(
+                          Icons.notifications_outlined,
+                          color: Colors.white,
+                          size: 22,
                         ),
                       ),
+                    ],
+                  ),
+
+                  const SizedBox(height: 18),
+
+                  // Search bar
+                  Container(
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(16),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withValues(alpha: 0.08),
+                          blurRadius: 12,
+                          offset: const Offset(0, 4),
+                        ),
+                      ],
+                    ),
+                    child: TextField(
+                      onChanged: (v) {
+                        _searchQuery = v;
+                        Future.delayed(const Duration(milliseconds: 400), () {
+                          if (mounted) _loadMarkers();
+                        });
+                      },
+                      style: const TextStyle(
+                          color: AppColors.textDark, fontSize: 14),
+                      decoration: const InputDecoration(
+                        hintText: 'Rechercher une promo, un commerce...',
+                        hintStyle:
+                            TextStyle(color: AppColors.textLight, fontSize: 13),
+                        prefixIcon: Icon(Icons.search_rounded,
+                            color: AppColors.primary, size: 20),
+                        border: InputBorder.none,
+                        contentPadding:
+                            EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+
+            const SizedBox(height: 16),
+
+            // ── Category chips ───────────────────────────────────────────
+            SizedBox(
+              height: 42,
+              child: ListView.builder(
+                scrollDirection: Axis.horizontal,
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                itemCount: _categories.length,
+                itemBuilder: (_, i) {
+                  final sel = _selectedCat == i;
+                  return GestureDetector(
+                    onTap: () {
+                      setState(() => _selectedCat = i);
+                      _loadMarkers();
+                    },
+                    child: AnimatedContainer(
+                      duration: const Duration(milliseconds: 200),
+                      margin: const EdgeInsets.only(right: 8),
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 18, vertical: 9),
+                      decoration: BoxDecoration(
+                        gradient: sel ? AppColors.primaryGradient : null,
+                        color: sel ? null : Colors.white,
+                        borderRadius: BorderRadius.circular(22),
+                        border: Border.all(
+                          color: sel ? Colors.transparent : AppColors.border,
+                        ),
+                        boxShadow: sel
+                            ? [
+                                BoxShadow(
+                                  color: AppColors.primary
+                                      .withValues(alpha: 0.3),
+                                  blurRadius: 8,
+                                  offset: const Offset(0, 3),
+                                )
+                              ]
+                            : null,
+                      ),
                       child: Text(
-                        _catEmoji(categories[i]) + " " + categories[i],
+                        '${_catEmoji(_categories[i])} ${_categories[i]}',
                         style: TextStyle(
-                          color: selected ? kWhite : kPrimary,
+                          color: sel ? Colors.white : AppColors.textMuted,
                           fontSize: 12,
-                          fontWeight: FontWeight.w500,
+                          fontWeight: sel ? FontWeight.w600 : FontWeight.normal,
                         ),
                       ),
                     ),
@@ -579,295 +317,121 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
             ),
 
-            SizedBox(height: 18),
+            const SizedBox(height: 16),
 
-            // ── AI RECOMMENDATIONS ──────────────────────────────────────────
-            if (aiList.isNotEmpty) ...[
-              Container(
-                padding: EdgeInsets.all(16),
+            // ── Map ──────────────────────────────────────────────────────
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: Container(
+                height: 200,
                 decoration: BoxDecoration(
-                  color: kWhite,
                   borderRadius: BorderRadius.circular(24),
-                  border: Border.all(color: kBorder),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Text("✨", style: TextStyle(fontSize: 16)),
-                        SizedBox(width: 6),
-                        Text(
-                          "IA RECOMMANDE POUR VOUS",
-                          style: TextStyle(
-                            color: kPrimary,
-                            fontWeight: FontWeight.w600,
-                            fontSize: 12,
-                            letterSpacing: 0.6,
-                          ),
-                        ),
-                      ],
-                    ),
-                    SizedBox(height: 14),
-                    GridView.builder(
-                      shrinkWrap: true,
-                      physics: NeverScrollableScrollPhysics(),
-                      itemCount: aiList.length,
-                      gridDelegate:
-                          SliverGridDelegateWithFixedCrossAxisCount(
-                        crossAxisCount: 2,
-                        crossAxisSpacing: 10,
-                        mainAxisSpacing: 10,
-                        childAspectRatio: 1.05,
-                      ),
-                      itemBuilder: (_, i) {
-                        final e = aiList[i];
-                        return Container(
-                          padding: EdgeInsets.all(14),
-                          decoration: BoxDecoration(
-                            borderRadius: BorderRadius.circular(18),
-                            gradient: LinearGradient(
-                              colors: [
-                                Color(0xFFFAF5FF),
-                                Color(0xFFEDE9FE)
-                              ],
-                              begin: Alignment.topLeft,
-                              end: Alignment.bottomRight,
-                            ),
-                            border: Border.all(color: Color(0xFFE9D5FF)),
-                          ),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Container(
-                                width: 40,
-                                height: 40,
-                                decoration: BoxDecoration(
-                                  color: kWhite,
-                                  borderRadius: BorderRadius.circular(12),
-                                  border: Border.all(color: kBorder),
-                                ),
-                                child: Icon(
-                                  getIconByCategory(e['category']),
-                                  color: kPrimary,
-                                  size: 20,
-                                ),
-                              ),
-                              SizedBox(height: 10),
-                              Text(
-                                e['description'] ?? "Promo",
-                                maxLines: 2,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(
-                                  color: kTextDark,
-                                  fontWeight: FontWeight.w600,
-                                  fontSize: 13,
-                                ),
-                              ),
-                              SizedBox(height: 4),
-                              Text(
-                                "-${e['discount'] ?? 0}%",
-                                style: TextStyle(
-                                    color: kAccentOrange,
-                                    fontWeight: FontWeight.w600,
-                                    fontSize: 13),
-                              ),
-                              SizedBox(height: 3),
-                              Text(
-                                "📍 ${(e['distance'] / 1000).toStringAsFixed(1)} km",
-                                style: TextStyle(
-                                    color: kPrimary, fontSize: 11),
-                              ),
-                            ],
-                          ),
-                        );
-                      },
+                  border: Border.all(color: AppColors.border),
+                  boxShadow: [
+                    BoxShadow(
+                      color: AppColors.primary.withValues(alpha: 0.08),
+                      blurRadius: 16,
+                      offset: const Offset(0, 6),
                     ),
                   ],
                 ),
-              ),
-              SizedBox(height: 20),
-            ],
-
-            // ── PROMOS LIST ─────────────────────────────────────────────────
-            Text(
-              "Promos à proximité",
-              style: TextStyle(
-                color: kTextDark,
-                fontSize: 15,
-                fontWeight: FontWeight.w600,
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(24),
+                  child: GestureDetector(
+                    onTap: () => setState(() => _selectedMarker = null),
+                    child: Stack(
+                      children: [
+                        FlutterMap(
+                          options: MapOptions(
+                            initialCenter: _center,
+                            initialZoom: 14,
+                          ),
+                          children: [
+                            TileLayer(
+                              urlTemplate:
+                                  'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+                              userAgentPackageName: 'com.example.memoire2026',
+                            ),
+                            MarkerLayer(
+                              markers: [
+                                Marker(
+                                  point: _center,
+                                  width: 36,
+                                  height: 36,
+                                  child: Container(
+                                    decoration: BoxDecoration(
+                                      gradient: AppColors.primaryGradient,
+                                      shape: BoxShape.circle,
+                                      border: Border.all(
+                                          color: Colors.white, width: 2.5),
+                                      boxShadow: [
+                                        BoxShadow(
+                                          color: AppColors.primary
+                                              .withValues(alpha: 0.4),
+                                          blurRadius: 8,
+                                        )
+                                      ],
+                                    ),
+                                    child: const Icon(Icons.my_location,
+                                        color: Colors.white, size: 16),
+                                  ),
+                                ),
+                                ..._markers,
+                              ],
+                            ),
+                          ],
+                        ),
+                        if (_selectedMarker != null)
+                          Positioned(
+                            bottom: 12,
+                            left: 12,
+                            right: 12,
+                            child: _MapPopup(
+                              marker: _selectedMarker!,
+                              isFav: _favBusinessIds
+                                  .contains(_selectedMarker!['id']),
+                              onMap: () => _openMap(
+                                _selectedMarker!['lat'],
+                                _selectedMarker!['lng'],
+                              ),
+                              onFav: () =>
+                                  _toggleFav(_selectedMarker!['id'] as String),
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                ),
               ),
             ),
 
-            SizedBox(height: 12),
+            const SizedBox(height: 20),
 
-            buildPromosList(),
-
-            SizedBox(height: 20),
-          ],
-        ),
-      ),
-
-      // ── BOTTOM NAV ────────────────────────────────────────────────────────
-      bottomNavigationBar: Container(
-        height: 75,
-        decoration: BoxDecoration(
-          color: kWhite,
-          borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-          border: Border(top: BorderSide(color: kBorder)),
-        ),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.spaceAround,
-          children: [
-            navItem(Icons.home_rounded,     "Accueil",  0, context),
-            navItem(Icons.favorite_rounded, "Favoris",  1, context),
-            navItem(Icons.smart_toy_rounded,"IA",       2, context),
-            navItem(Icons.notifications_rounded, "Alertes", 3, context),
-            navItem(Icons.person_rounded,   "Profil",   4, context),
-          ],
-        ),
-      ),
-    );
-  }
-
-  // ─── PROMOS LIST ──────────────────────────────────────────────────────────
-  Widget buildPromosList() {
-    return StreamBuilder<QuerySnapshot>(
-      stream: FirebaseFirestore.instance
-          .collection('promos')
-          .where('status', isEqualTo: 'approved')
-          .snapshots(),
-      builder: (context, snapshot) {
-        if (!snapshot.hasData) return SizedBox();
-
-        final promos = snapshot.data!.docs;
-
-        return Column(
-          children: promos.map((doc) {
-            final data = doc.data() as Map<String, dynamic>;
-            final p = {
-              ...data,
-              "distance": data['distance'] ?? "1.2",
-              "lat": data['lat'] ?? 35.0,
-              "lng": data['lng'] ?? 9.0,
-            };
-
-            final Color bannerColor = _categoryColor(p['category']);
-
-            return GestureDetector(
-              onTap: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (_) => PromoDetailScreen(promo: p),
-                  ),
-                );
-              },
-              child: Container(
-                margin: EdgeInsets.only(bottom: 16),
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(22),
-                  color: kWhite,
-                  border: Border.all(color: kBorder),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+            // ── AI Recommendations ───────────────────────────────────────
+            if (_recommendations.isNotEmpty) ...[
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                child: Row(
                   children: [
-                    // ── BANNER ─────────────────────────────────────────────
                     Container(
-                      height: 115,
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 10, vertical: 5),
                       decoration: BoxDecoration(
-                        borderRadius: BorderRadius.vertical(
-                            top: Radius.circular(22)),
-                        color: bannerColor,
+                        gradient: AppColors.primaryGradient,
+                        borderRadius: BorderRadius.circular(20),
                       ),
-                      child: Stack(
+                      child: const Row(
                         children: [
-                          Center(
-                            child: Text(
-                              _catEmojiLarge(p['category']),
-                              style: TextStyle(fontSize: 38),
-                            ),
-                          ),
-                          Positioned(
-                            top: 12,
-                            right: 12,
-                            child: Container(
-                              padding: EdgeInsets.symmetric(
-                                  horizontal: 12, vertical: 5),
-                              decoration: BoxDecoration(
-                                color: kWhite,
-                                borderRadius: BorderRadius.circular(20),
-                              ),
-                              child: Text(
-                                "-${p['discount']}%",
-                                style: TextStyle(
-                                  color: kPrimary,
-                                  fontWeight: FontWeight.w700,
-                                  fontSize: 12,
-                                ),
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-
-                    // ── BODY ───────────────────────────────────────────────
-                    Padding(
-                      padding: EdgeInsets.all(14),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Row(
-                            mainAxisAlignment:
-                                MainAxisAlignment.spaceBetween,
-                            children: [
-                              Text(
-                                p['title'] ?? "",
-                                style: TextStyle(
-                                  color: kTextDark,
-                                  fontWeight: FontWeight.w600,
-                                  fontSize: 15,
-                                ),
-                              ),
-                              Row(
-                                children: [
-                                  Icon(Icons.location_on,
-                                      size: 12, color: kPrimary),
-                                  SizedBox(width: 2),
-                                  Text(
-                                    "${p['distance'] is num ? (p['distance'] / 1000).toStringAsFixed(1) : p['distance']} km",
-                                    style: TextStyle(
-                                        color: kPrimary,
-                                        fontSize: 12,
-                                        fontWeight: FontWeight.w500),
-                                  ),
-                                ],
-                              ),
-                            ],
-                          ),
-                          SizedBox(height: 5),
+                          Text('✨', style: TextStyle(fontSize: 12)),
+                          SizedBox(width: 4),
                           Text(
-                            p['description'] ?? "",
+                            'IA POUR VOUS',
                             style: TextStyle(
-                                color: kTextMuted, fontSize: 13),
-                          ),
-                          SizedBox(height: 12),
-                          Row(
-                            children: [
-                              _Tag(
-                                  label: p['category'] ?? "",
-                                  bg: kPrimaryLight,
-                                  fg: kPrimary),
-                              SizedBox(width: 8),
-                              _Tag(
-                                label: "Expire bientôt",
-                                bg: Color(0xFFFEFCE8),
-                                fg: Color(0xFFCA8A04),
-                                borderColor: Color(0xFFFDE68A),
-                              ),
-                            ],
+                              color: Colors.white,
+                              fontSize: 11,
+                              fontWeight: FontWeight.w700,
+                              letterSpacing: 0.5,
+                            ),
                           ),
                         ],
                       ),
@@ -875,87 +439,451 @@ class _HomeScreenState extends State<HomeScreen> {
                   ],
                 ),
               ),
-            );
-          }).toList(),
-        );
-      },
+              const SizedBox(height: 12),
+              SizedBox(
+                height: 180,
+                child: ListView.builder(
+                  scrollDirection: Axis.horizontal,
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  itemCount: _recommendations.length,
+                  itemBuilder: (_, i) {
+                    final p = _recommendations[i];
+                    return GestureDetector(
+                      onTap: () => Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                            builder: (_) => PromoDetailScreen(promo: p)),
+                      ),
+                      child: Container(
+                        width: 150,
+                        margin: const EdgeInsets.only(right: 12),
+                        padding: const EdgeInsets.all(14),
+                        decoration: BoxDecoration(
+                          gradient: AppColors.softGradient,
+                          borderRadius: BorderRadius.circular(20),
+                          border: Border.all(color: AppColors.border),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Container(
+                              width: 40,
+                              height: 40,
+                              decoration: BoxDecoration(
+                                gradient: AppColors.primaryGradient,
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                              child: Icon(_catIcon(p.category),
+                                  color: Colors.white, size: 20),
+                            ),
+                            const Spacer(),
+                            Text(
+                              p.title,
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                color: AppColors.textDark,
+                                fontWeight: FontWeight.w600,
+                                fontSize: 13,
+                              ),
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              '-${p.discount}%',
+                              style: const TextStyle(
+                                color: AppColors.accent,
+                                fontWeight: FontWeight.w700,
+                                fontSize: 13,
+                              ),
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              '📍 ${p.distanceLabel}',
+                              style: const TextStyle(
+                                  color: AppColors.primary, fontSize: 11),
+                            ),
+                          ],
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              ),
+              const SizedBox(height: 20),
+            ],
+
+            // ── Promos list ──────────────────────────────────────────────
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: Row(
+                children: [
+                  const Text(
+                    'Promos à proximité',
+                    style: TextStyle(
+                      color: AppColors.textDark,
+                      fontSize: 16,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  const Spacer(),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 10, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: AppColors.primaryLight,
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: const Text(
+                      'Voir tout',
+                      style: TextStyle(
+                          color: AppColors.primary,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+
+            const SizedBox(height: 12),
+
+            _PromosList(center: _center),
+
+            const SizedBox(height: 24),
+          ],
+        ),
+      ),
+      bottomNavigationBar: const ClientNavbar(currentIndex: 0),
     );
-  }
-
-  // ─── HELPERS ──────────────────────────────────────────────────────────────
-  String _catEmoji(String cat) {
-    switch (cat.toLowerCase()) {
-      case "tous":       return "🏷️";
-      case "food":       return "🍔";
-      case "café":       return "☕";
-      case "resto":      return "🍽️";
-      case "mode":
-      case "vetement":   return "👗";
-      case "beauté":     return "💄";
-      case "reparation": return "🔧";
-      case "publinet":   return "💻";
-      case "librairie":  return "📚";
-      default:           return "🏷️";
-    }
-  }
-
-  String _catEmojiLarge(String? cat) {
-    switch ((cat ?? "").toLowerCase()) {
-      case "food":
-      case "resto":   return "🍕";
-      case "café":    return "☕";
-      case "mode":
-      case "vetement":return "👗";
-      case "beauté":  return "💄";
-      default:        return "🛍️";
-    }
-  }
-
-  Color _categoryColor(String? cat) {
-    switch ((cat ?? "").toLowerCase()) {
-      case "food":
-      case "resto":    return Color(0xFFFFF7ED); // orange-50
-      case "café":     return Color(0xFFFFF8E1); // amber-50
-      case "mode":
-      case "vetement": return kPrimaryLight;
-      case "beauté":   return Color(0xFFFDF2F8); // pink-50
-      default:         return Color(0xFFF0F9FF); // blue-50
-    }
   }
 }
 
-// ─── TAG WIDGET ───────────────────────────────────────────────────────────
-class _Tag extends StatelessWidget {
-  final String label;
-  final Color bg, fg;
-  final Color? borderColor;
+// ─── MAP POPUP ────────────────────────────────────────────────────────────────
 
-  const _Tag({
-    required this.label,
-    required this.bg,
-    required this.fg,
-    this.borderColor,
+class _MapPopup extends StatelessWidget {
+  final Map marker;
+  final bool isFav;
+  final VoidCallback onMap;
+  final VoidCallback onFav;
+
+  const _MapPopup({
+    required this.marker,
+    required this.isFav,
+    required this.onMap,
+    required this.onFav,
   });
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+      padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: bg,
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: borderColor ?? bg),
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: AppColors.primary.withValues(alpha: 0.15),
+            blurRadius: 16,
+            offset: const Offset(0, 4),
+          ),
+        ],
       ),
-      child: Text(
-        label,
-        style: TextStyle(
-            color: fg, fontSize: 11, fontWeight: FontWeight.w500),
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  marker['name'] ?? '',
+                  style: const TextStyle(
+                    color: AppColors.textDark,
+                    fontWeight: FontWeight.w600,
+                    fontSize: 13,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  '${marker['distance']} km · ${marker['desc']}',
+                  style: const TextStyle(
+                      color: AppColors.textMuted, fontSize: 11),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 8),
+          GestureDetector(
+            onTap: onFav,
+            child: Icon(
+              isFav ? Icons.favorite_rounded : Icons.favorite_border_rounded,
+              color: AppColors.accent,
+              size: 22,
+            ),
+          ),
+          const SizedBox(width: 8),
+          GestureDetector(
+            onTap: onMap,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+              decoration: BoxDecoration(
+                gradient: AppColors.primaryGradient,
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: const Text(
+                'Aller',
+                style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600),
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
 }
 
-// ─── ANIMATED MARKER ──────────────────────────────────────────────────────
+// ─── PROMOS LIST ──────────────────────────────────────────────────────────────
+
+class _PromosList extends StatelessWidget {
+  final LatLng center;
+  const _PromosList({required this.center});
+
+  IconData _catIcon(String? cat) {
+    switch (cat) {
+      case 'café':       return Icons.coffee_rounded;
+      case 'resto':      return Icons.restaurant_rounded;
+      case 'vetement':   return Icons.checkroom_rounded;
+      case 'reparation': return Icons.build_rounded;
+      case 'publinet':   return Icons.computer_rounded;
+      case 'librairie':  return Icons.menu_book_rounded;
+      default:           return Icons.store_rounded;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return StreamBuilder<List<PromoModel>>(
+      stream: PromoService.watchApproved(),
+      builder: (context, snap) {
+        if (snap.connectionState == ConnectionState.waiting) {
+          return const Center(
+            child: Padding(
+              padding: EdgeInsets.all(32),
+              child: CircularProgressIndicator(color: AppColors.primary),
+            ),
+          );
+        }
+
+        final promos = snap.data ?? [];
+        if (promos.isEmpty) {
+          return const Center(
+            child: Padding(
+              padding: EdgeInsets.all(32),
+              child: Column(
+                children: [
+                  Icon(Icons.local_offer_outlined,
+                      size: 48, color: AppColors.textLight),
+                  SizedBox(height: 12),
+                  Text('Aucune promo disponible',
+                      style: TextStyle(color: AppColors.textMuted)),
+                ],
+              ),
+            ),
+          );
+        }
+
+        return Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16),
+          child: Column(
+            children: promos.map((promo) {
+              final distKm = (promo.lat != null && promo.lng != null)
+                  ? Geolocator.distanceBetween(
+                          center.latitude, center.longitude,
+                          promo.lat!, promo.lng!) /
+                      1000
+                  : 0.0;
+
+              return GestureDetector(
+                onTap: () => Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                      builder: (_) => PromoDetailScreen(promo: promo)),
+                ),
+                child: Container(
+                  margin: const EdgeInsets.only(bottom: 14),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(20),
+                    border: Border.all(color: AppColors.border),
+                    boxShadow: [
+                      BoxShadow(
+                        color: AppColors.purple.withValues(alpha: 0.06),
+                        blurRadius: 12,
+                        offset: const Offset(0, 4),
+                      ),
+                    ],
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      // Banner
+                      Container(
+                        height: 110,
+                        decoration: BoxDecoration(
+                          gradient: AppColors.softGradient,
+                          borderRadius: const BorderRadius.vertical(
+                              top: Radius.circular(20)),
+                        ),
+                        child: Stack(
+                          children: [
+                            Center(
+                              child: Icon(
+                                _catIcon(promo.category),
+                                size: 48,
+                                color: AppColors.primary.withValues(alpha: 0.3),
+                              ),
+                            ),
+                            Positioned(
+                              top: 10,
+                              right: 10,
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 12, vertical: 5),
+                                decoration: BoxDecoration(
+                                  gradient: AppColors.primaryGradient,
+                                  borderRadius: BorderRadius.circular(20),
+                                ),
+                                child: Text(
+                                  '-${promo.discount}%',
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontWeight: FontWeight.w700,
+                                    fontSize: 13,
+                                  ),
+                                ),
+                              ),
+                            ),
+                            if (promo.isExpired)
+                              Positioned(
+                                top: 10,
+                                left: 10,
+                                child: Container(
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal: 10, vertical: 4),
+                                  decoration: BoxDecoration(
+                                    color: AppColors.warning,
+                                    borderRadius: BorderRadius.circular(20),
+                                  ),
+                                  child: const Text(
+                                    '⏰ Expire bientôt',
+                                    style: TextStyle(
+                                        color: Colors.white, fontSize: 11),
+                                  ),
+                                ),
+                              ),
+                          ],
+                        ),
+                      ),
+
+                      // Info
+                      Padding(
+                        padding: const EdgeInsets.all(14),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              mainAxisAlignment:
+                                  MainAxisAlignment.spaceBetween,
+                              children: [
+                                Expanded(
+                                  child: Text(
+                                    promo.title,
+                                    style: const TextStyle(
+                                      color: AppColors.textDark,
+                                      fontWeight: FontWeight.w600,
+                                      fontSize: 15,
+                                    ),
+                                  ),
+                                ),
+                                if (promo.lat != null) ...[
+                                  const Icon(Icons.location_on,
+                                      size: 13, color: AppColors.accent),
+                                  const SizedBox(width: 2),
+                                  Text(
+                                    '${distKm.toStringAsFixed(1)} km',
+                                    style: const TextStyle(
+                                      color: AppColors.accent,
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.w500,
+                                    ),
+                                  ),
+                                ],
+                              ],
+                            ),
+                            const SizedBox(height: 5),
+                            Text(
+                              promo.description,
+                              style: const TextStyle(
+                                  color: AppColors.textMuted, fontSize: 13),
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                            if (promo.businessName != null) ...[
+                              const SizedBox(height: 8),
+                              Row(
+                                children: [
+                                  const Icon(Icons.store_outlined,
+                                      size: 13, color: AppColors.textLight),
+                                  const SizedBox(width: 4),
+                                  Text(
+                                    promo.businessName!,
+                                    style: const TextStyle(
+                                        color: AppColors.textLight,
+                                        fontSize: 12),
+                                  ),
+                                  if (promo.category != null) ...[
+                                    const SizedBox(width: 8),
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(
+                                          horizontal: 8, vertical: 3),
+                                      decoration: BoxDecoration(
+                                        color: AppColors.primaryLight,
+                                        borderRadius:
+                                            BorderRadius.circular(10),
+                                      ),
+                                      child: Text(
+                                        promo.category!,
+                                        style: const TextStyle(
+                                          color: AppColors.primary,
+                                          fontSize: 11,
+                                          fontWeight: FontWeight.w500,
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ],
+                              ),
+                            ],
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              );
+            }).toList(),
+          ),
+        );
+      },
+    );
+  }
+}
+
+// ─── ANIMATED MARKER ──────────────────────────────────────────────────────────
+
 class _AnimatedMarker extends StatefulWidget {
   final IconData icon;
   const _AnimatedMarker({required this.icon});
@@ -966,69 +894,62 @@ class _AnimatedMarker extends StatefulWidget {
 
 class _AnimatedMarkerState extends State<_AnimatedMarker>
     with SingleTickerProviderStateMixin {
-  late AnimationController controller;
+  late AnimationController _ctrl;
+  late Animation<double>   _scale;
 
   @override
   void initState() {
     super.initState();
-    controller = AnimationController(
+    _ctrl = AnimationController(
       vsync: this,
-      duration: Duration(seconds: 2),
+      duration: const Duration(seconds: 2),
     )..repeat(reverse: true);
+    _scale = Tween<double>(begin: 1.0, end: 1.15).animate(
+      CurvedAnimation(parent: _ctrl, curve: Curves.easeInOut),
+    );
   }
 
   @override
   void dispose() {
-    controller.dispose();
+    _ctrl.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    return AnimatedBuilder(
-      animation: controller,
-      builder: (_, child) {
-        return Transform.scale(
-          scale: 1 + controller.value * 0.25,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Container(
-                width: 38,
-                height: 38,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: kPrimary,
-                  border: Border.all(color: kWhite, width: 2),
-                  boxShadow: [
-                    BoxShadow(
-                      color: kPrimary.withOpacity(
-                          0.35 + controller.value * 0.25),
-                      blurRadius: 12,
-                      spreadRadius: 2,
-                    ),
-                  ],
+    return ScaleTransition(
+      scale: _scale,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            width: 36,
+            height: 36,
+            decoration: BoxDecoration(
+              gradient: AppColors.primaryGradient,
+              shape: BoxShape.circle,
+              border: Border.all(color: Colors.white, width: 2),
+              boxShadow: [
+                BoxShadow(
+                  color: AppColors.primary.withValues(alpha: 0.4),
+                  blurRadius: 8,
+                  spreadRadius: 1,
                 ),
-                child: Icon(widget.icon, color: kWhite, size: 18),
-              ),
-              // Pin tail
-              Container(
-                width: 0,
-                height: 0,
-                decoration: BoxDecoration(
-                  border: Border(
-                    left: BorderSide(
-                        width: 5, color: Colors.transparent),
-                    right: BorderSide(
-                        width: 5, color: Colors.transparent),
-                    top: BorderSide(width: 7, color: kPrimary),
-                  ),
-                ),
-              ),
-            ],
+              ],
+            ),
+            child: Icon(widget.icon, color: Colors.white, size: 16),
           ),
-        );
-      },
+          const SizedBox(height: 2),
+          Container(
+            width: 6,
+            height: 6,
+            decoration: BoxDecoration(
+              color: AppColors.primary,
+              shape: BoxShape.circle,
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

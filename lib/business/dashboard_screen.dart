@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
-import 'add_promo_screen.dart';
-import 'manage_promos_screen.dart';
+import '../models/business_model.dart';
+import '../models/promo_model.dart';
+import '../services/business_service.dart';
+import '../services/promo_service.dart';
+import '../theme/app_theme.dart';
 import 'business_navbar.dart';
 
 class DashboardScreen extends StatelessWidget {
@@ -12,352 +14,415 @@ class DashboardScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFF0F0B1F),
+      backgroundColor: AppColors.bg,
       bottomNavigationBar: BusinessNavbar(
         currentIndex: 0,
         businessId: businessId,
       ),
-
-      body: SafeArea(
-        child: StreamBuilder<DocumentSnapshot>(
-          stream: FirebaseFirestore.instance
-              .collection('businesses')
-              .doc(businessId)
-              .snapshots(),
-          builder: (context, snapshot) {
-            if (snapshot.connectionState == ConnectionState.waiting) {
-              return const Center(child: CircularProgressIndicator());
-            }
-
-            if (!snapshot.hasData || !snapshot.data!.exists) {
-              return const Center(
-                child: Text("No Data", style: TextStyle(color: Colors.white)),
-              );
-            }
-
-            var data = snapshot.data!;
-            var stats = data['stats'] ?? {};
-            var weekly = data['weekly_views'] ?? {};
-
-            return SingleChildScrollView(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  /// HEADER
-                  const Text(
-                    "Dashboard 📊",
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 22,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-
-                  Text(
-                    "${data['name'] ?? "Business"} · ${DateTime.now().year}",
-                    style: const TextStyle(color: Colors.white54),
-                  ),
-
-                  const SizedBox(height: 20),
-
-                  /// STATS GRID (DYNAMIC)
-                  GridView.count(
-                    crossAxisCount: 2,
-                    shrinkWrap: true,
-                    physics: const NeverScrollableScrollPhysics(),
-                    mainAxisSpacing: 12,
-                    crossAxisSpacing: 12,
-                    childAspectRatio: 1.4,
-                    children: [
-                      StatCard(
-                        "VUES",
-                        (stats['views'] ?? 0).toString(),
-                        getPercent(stats['views'] ?? 0),
-                      ),
-
-                      StatCard(
-                        "CLICS",
-                        (stats['clicks'] ?? 0).toString(),
-                        getPercent(stats['clicks'] ?? 0),
-                      ),
-
-                      StatCard(
-                        "CONVERSIONS",
-                        (stats['conversions'] ?? 0).toString(),
-                        getPercent(stats['conversions'] ?? 0),
-                      ),
-
-                      StatCard(
-                        "ÉCONOMIES",
-                        "${stats['savings'] ?? 0} DT",
-                        getPercent(stats['savings'] ?? 0),
-                      ),
-                    ],
-                  ),
-
-                  const SizedBox(height: 20),
-
-                  /// WEEKLY GRAPH
-                  const Text(
-                    "Vues cette semaine",
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 16,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-
-                  const SizedBox(height: 12),
-
-                  Container(
-                    padding: const EdgeInsets.all(16),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFF1A1333),
-                      borderRadius: BorderRadius.circular(16),
-                    ),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        _bar("Lun", weekly['lun'] ?? 0),
-                        _bar("Mar", weekly['mar'] ?? 0),
-                        _bar("Mer", weekly['mer'] ?? 0),
-                        _bar("Jeu", weekly['jeu'] ?? 0),
-                        _bar("Ven", weekly['ven'] ?? 0),
-                        _bar("Sam", weekly['sam'] ?? 0),
-                        _bar("Dim", weekly['dim'] ?? 0),
-                      ],
-                    ),
-                  ),
-
-                  const SizedBox(height: 25),
-
-                  /// PROMOS (FIXED 🔥)
-                  const Text(
-                    "Mes promotions actives",
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 16,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-
-                  const SizedBox(height: 10),
-
-                  StreamBuilder<QuerySnapshot>(
-                    stream: FirebaseFirestore.instance
-                        .collection('promos')
-                        .where('businessId', isEqualTo: businessId)
-                        .where('status', isEqualTo: "approved")
-                        .snapshots(),
-                    builder: (context, snap) {
-                      if (!snap.hasData) return Container();
-
-                      if (snap.data!.docs.isEmpty) {
-                        return const Text(
-                          "Aucune promotion active",
-                          style: TextStyle(color: Colors.white54),
-                        );
-                      }
-
-                      return Column(
-                        children: snap.data!.docs.map((doc) {
-                          var p = doc.data() as Map<String, dynamic>;
-
-                          return PromoTile(
-                            title: p['title'] ?? "",
-                            views: p['views'] ?? 0,
-                            used: p['used'] ?? 0,
-                          );
-                        }).toList(),
-                      );
-                    },
-                  ),
-
-                  const SizedBox(height: 30),
-                ],
-              ),
+      body: StreamBuilder<BusinessModel?>(
+        stream: BusinessService.watchBusiness(businessId),
+        builder: (context, snapshot) {
+          if (snapshot.connectionState == ConnectionState.waiting) {
+            return const Center(
+              child: CircularProgressIndicator(color: AppColors.primary),
             );
-          },
-        ),
-      ),
-    );
-  }
+          }
 
-  /// 🔥 NAVBAR
-  Widget buildNavbar(BuildContext context, String businessId) {
-    return Container(
-      margin: const EdgeInsets.all(15),
-      padding: const EdgeInsets.symmetric(vertical: 10),
-      decoration: BoxDecoration(
-        color: const Color(0xFF1A1333),
-        borderRadius: BorderRadius.circular(25),
-        boxShadow: [
-          BoxShadow(color: Colors.black.withOpacity(0.4), blurRadius: 20),
-        ],
-      ),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceAround,
-        children: [
-          navItem(Icons.dashboard, "Dashboard", true, () {}),
-
-          /// ➕ ADD PROMO
-          navItem(Icons.add_circle, "Add", false, () {
-            Navigator.push(
-              context,
-              MaterialPageRoute(builder: (_) => AddPromoScreen()),
+          final business = snapshot.data;
+          if (business == null) {
+            return const Center(
+              child: Text('Commerce introuvable',
+                  style: TextStyle(color: AppColors.textMuted)),
             );
-          }),
+          }
 
-          /// ⚙️ MANAGE PROMOS 🔥
-          navItem(Icons.settings, "Manage", false, () {
-            Navigator.push(
-              context,
-              MaterialPageRoute(
-                builder: (_) => ManagePromosScreen(businessId: businessId),
-              ),
-            );
-          }),
-        ],
-      ),
-    );
-  }
-
-  Widget navItem(IconData icon, String label, bool active, VoidCallback onTap) {
-    return GestureDetector(
-      onTap: onTap,
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 250),
-        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
-        decoration: BoxDecoration(
-          gradient: active
-              ? const LinearGradient(
-                  colors: [Color(0xFF6C47FF), Color(0xFF9333EA)],
-                )
-              : null,
-          borderRadius: BorderRadius.circular(20),
-        ),
-        child: Row(
-          children: [
-            Icon(icon, color: active ? Colors.white : Colors.white54),
-            const SizedBox(width: 6),
-            if (active)
-              const Text(
-                "Dashboard",
-                style: TextStyle(
-                  color: Colors.white,
-                  fontWeight: FontWeight.bold,
+          return CustomScrollView(
+            slivers: [
+              // ─── Header ──────────────────────────────────────────────
+              SliverAppBar(
+                expandedHeight: 160,
+                pinned: true,
+                automaticallyImplyLeading: false,
+                backgroundColor: Colors.transparent,
+                flexibleSpace: FlexibleSpaceBar(
+                  background: Container(
+                    decoration: const BoxDecoration(
+                      gradient: AppColors.mainGradient,
+                    ),
+                    child: SafeArea(
+                      child: Padding(
+                        padding: const EdgeInsets.fromLTRB(20, 20, 20, 16),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisAlignment: MainAxisAlignment.end,
+                          children: [
+                            Row(
+                              children: [
+                                Container(
+                                  width: 52,
+                                  height: 52,
+                                  decoration: BoxDecoration(
+                                    color: Colors.white.withValues(alpha: 0.2),
+                                    shape: BoxShape.circle,
+                                    border: Border.all(
+                                        color: Colors.white.withValues(alpha: 0.4),
+                                        width: 2),
+                                  ),
+                                  child: const Icon(Icons.store_rounded,
+                                      color: Colors.white, size: 26),
+                                ),
+                                const SizedBox(width: 12),
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        business.name,
+                                        style: const TextStyle(
+                                          color: Colors.white,
+                                          fontSize: 20,
+                                          fontWeight: FontWeight.w800,
+                                        ),
+                                      ),
+                                      Text(
+                                        business.category,
+                                        style: TextStyle(
+                                          color: Colors.white
+                                              .withValues(alpha: 0.8),
+                                          fontSize: 13,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 12),
+                            Text(
+                              'Dashboard · ${DateTime.now().year}',
+                              style: TextStyle(
+                                color: Colors.white.withValues(alpha: 0.7),
+                                fontSize: 12,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
                 ),
               ),
-          ],
-        ),
+
+              // ─── Content ─────────────────────────────────────────────
+              SliverToBoxAdapter(
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      // Stats grid
+                      GridView.count(
+                        crossAxisCount: 2,
+                        shrinkWrap: true,
+                        physics: const NeverScrollableScrollPhysics(),
+                        mainAxisSpacing: 12,
+                        crossAxisSpacing: 12,
+                        childAspectRatio: 1.5,
+                        children: [
+                          _StatCard(
+                            label: 'Vues',
+                            value: business.stats.views.toString(),
+                            growth: _growth(business.stats.views),
+                            icon: Icons.visibility_rounded,
+                            color: AppColors.info,
+                          ),
+                          _StatCard(
+                            label: 'Clics',
+                            value: business.stats.clicks.toString(),
+                            growth: _growth(business.stats.clicks),
+                            icon: Icons.ads_click_rounded,
+                            color: AppColors.primary,
+                          ),
+                          _StatCard(
+                            label: 'Conversions',
+                            value: business.stats.conversions.toString(),
+                            growth: _growth(business.stats.conversions),
+                            icon: Icons.check_circle_rounded,
+                            color: AppColors.success,
+                          ),
+                          _StatCard(
+                            label: 'Économies',
+                            value: '${business.stats.savings} DT',
+                            growth: _growth(business.stats.savings),
+                            icon: Icons.savings_rounded,
+                            color: AppColors.warning,
+                          ),
+                        ],
+                      ),
+
+                      const SizedBox(height: 20),
+
+                      // Weekly chart
+                      const Text(
+                        'Vues cette semaine',
+                        style: TextStyle(
+                          color: AppColors.textDark,
+                          fontSize: 16,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      Container(
+                        padding: const EdgeInsets.all(16),
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(16),
+                          border: Border.all(color: AppColors.border),
+                          boxShadow: [
+                            BoxShadow(
+                              color: AppColors.purple.withValues(alpha: 0.05),
+                              blurRadius: 8,
+                              offset: const Offset(0, 3),
+                            ),
+                          ],
+                        ),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          crossAxisAlignment: CrossAxisAlignment.end,
+                          children: [
+                            _bar('Lun', business.weeklyViews.lun,
+                                business.weeklyViews.max),
+                            _bar('Mar', business.weeklyViews.mar,
+                                business.weeklyViews.max),
+                            _bar('Mer', business.weeklyViews.mer,
+                                business.weeklyViews.max),
+                            _bar('Jeu', business.weeklyViews.jeu,
+                                business.weeklyViews.max),
+                            _bar('Ven', business.weeklyViews.ven,
+                                business.weeklyViews.max),
+                            _bar('Sam', business.weeklyViews.sam,
+                                business.weeklyViews.max),
+                            _bar('Dim', business.weeklyViews.dim,
+                                business.weeklyViews.max),
+                          ],
+                        ),
+                      ),
+
+                      const SizedBox(height: 20),
+
+                      // Active promos
+                      const Text(
+                        'Mes promotions actives',
+                        style: TextStyle(
+                          color: AppColors.textDark,
+                          fontSize: 16,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+
+                      StreamBuilder<List<PromoModel>>(
+                        stream: PromoService.watchByBusiness(businessId),
+                        builder: (context, promoSnap) {
+                          if (!promoSnap.hasData) {
+                            return const SizedBox.shrink();
+                          }
+
+                          final approved = promoSnap.data!
+                              .where(
+                                  (p) => p.status == PromoStatus.approved)
+                              .toList();
+
+                          if (approved.isEmpty) {
+                            return Container(
+                              padding: const EdgeInsets.all(20),
+                              decoration: BoxDecoration(
+                                color: Colors.white,
+                                borderRadius: BorderRadius.circular(16),
+                                border: Border.all(color: AppColors.border),
+                              ),
+                              child: const Row(
+                                children: [
+                                  Icon(Icons.info_outline_rounded,
+                                      color: AppColors.textLight, size: 20),
+                                  SizedBox(width: 10),
+                                  Text(
+                                    'Aucune promotion active',
+                                    style: TextStyle(
+                                        color: AppColors.textMuted),
+                                  ),
+                                ],
+                              ),
+                            );
+                          }
+
+                          return Column(
+                            children: approved
+                                .map((p) => _PromoTile(promo: p))
+                                .toList(),
+                          );
+                        },
+                      ),
+
+                      const SizedBox(height: 24),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          );
+        },
       ),
     );
   }
 
-  /// 📊 BAR GRAPH
-  Widget _bar(String day, int value) {
-    double height = (value.toDouble() / 2).clamp(10, 120);
+  Widget _bar(String day, int value, int maxValue) {
+    final height = maxValue > 0
+        ? ((value / maxValue) * 90).clamp(6.0, 90.0)
+        : 6.0;
 
     return Column(
+      mainAxisAlignment: MainAxisAlignment.end,
       children: [
         Container(
-          width: 18,
+          width: 20,
           height: height,
           decoration: BoxDecoration(
-            gradient: const LinearGradient(
-              colors: [Colors.deepPurple, Colors.purpleAccent],
-              begin: Alignment.bottomCenter,
-              end: Alignment.topCenter,
-            ),
+            gradient: AppColors.primaryGradient,
             borderRadius: BorderRadius.circular(6),
           ),
         ),
         const SizedBox(height: 6),
-        Text(day, style: const TextStyle(color: Colors.white54, fontSize: 12)),
+        Text(
+          day,
+          style: const TextStyle(color: AppColors.textLight, fontSize: 11),
+        ),
       ],
     );
   }
 
-  /// 📈 % CALCULATION
-  String getPercent(int value) {
-    if (value == 0) return "0%";
-    double growth = value / 10;
-    return "+${growth.toStringAsFixed(0)}%";
+  String _growth(int value) {
+    if (value == 0) return '0%';
+    return '+${(value / 10).toStringAsFixed(0)}%';
   }
 }
 
-/// STAT CARD
-class StatCard extends StatelessWidget {
-  final String title, value, percent;
+// ─── STAT CARD ────────────────────────────────────────────────────────────────
 
-  const StatCard(this.title, this.value, this.percent, {super.key});
+class _StatCard extends StatelessWidget {
+  final String label;
+  final String value;
+  final String growth;
+  final IconData icon;
+  final Color color;
 
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: const Color(0xFF1A1333),
-        borderRadius: BorderRadius.circular(16),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            title,
-            style: const TextStyle(color: Colors.white54, fontSize: 12),
-          ),
-          const Spacer(),
-          Text(
-            value,
-            style: const TextStyle(
-              color: Colors.deepPurple,
-              fontSize: 22,
-              fontWeight: FontWeight.bold,
-            ),
-          ),
-          const SizedBox(height: 4),
-          Text(
-            "↑ $percent",
-            style: const TextStyle(color: Colors.green, fontSize: 12),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-/// PROMO TILE
-class PromoTile extends StatelessWidget {
-  final String title;
-  final int views, used;
-
-  const PromoTile({
-    super.key,
-    required this.title,
-    required this.views,
-    required this.used,
+  const _StatCard({
+    required this.label,
+    required this.value,
+    required this.growth,
+    required this.icon,
+    required this.color,
   });
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      margin: const EdgeInsets.only(bottom: 12),
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
-        color: const Color(0xFF1A1333),
+        color: Colors.white,
         borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: AppColors.border),
+        boxShadow: [
+          BoxShadow(
+            color: color.withValues(alpha: 0.08),
+            blurRadius: 8,
+            offset: const Offset(0, 3),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 32,
+                height: 32,
+                decoration: BoxDecoration(
+                  color: color.withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Icon(icon, color: color, size: 16),
+              ),
+              const Spacer(),
+              Container(
+                padding: const EdgeInsets.symmetric(
+                    horizontal: 6, vertical: 2),
+                decoration: BoxDecoration(
+                  color: AppColors.success.withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Text(
+                  '↑ $growth',
+                  style: const TextStyle(
+                    color: AppColors.success,
+                    fontSize: 10,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const Spacer(),
+          Text(
+            value,
+            style: TextStyle(
+              color: color,
+              fontSize: 22,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+          const SizedBox(height: 2),
+          Text(
+            label,
+            style: const TextStyle(
+                color: AppColors.textMuted, fontSize: 11),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ─── PROMO TILE ───────────────────────────────────────────────────────────────
+
+class _PromoTile extends StatelessWidget {
+  final PromoModel promo;
+
+  const _PromoTile({required this.promo});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 10),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: AppColors.border),
       ),
       child: Row(
         children: [
           Container(
-            padding: const EdgeInsets.all(10),
+            width: 40,
+            height: 40,
             decoration: BoxDecoration(
-              color: Colors.deepPurple,
+              gradient: AppColors.primaryGradient,
               borderRadius: BorderRadius.circular(12),
             ),
-            child: const Icon(Icons.local_offer, color: Colors.white),
+            child: const Icon(Icons.local_offer_rounded,
+                color: Colors.white, size: 18),
           ),
           const SizedBox(width: 12),
           Expanded(
@@ -365,29 +430,36 @@ class PromoTile extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  title,
+                  promo.title,
                   style: const TextStyle(
-                    color: Colors.white,
-                    fontWeight: FontWeight.bold,
+                    color: AppColors.textDark,
+                    fontWeight: FontWeight.w600,
+                    fontSize: 13,
                   ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                 ),
-                const SizedBox(height: 4),
+                const SizedBox(height: 3),
                 Text(
-                  "$views vues · $used utilisations",
-                  style: const TextStyle(color: Colors.white54, fontSize: 12),
+                  '${promo.views} vues · ${promo.used} utilisations',
+                  style: const TextStyle(
+                      color: AppColors.textMuted, fontSize: 11),
                 ),
               ],
             ),
           ),
           Container(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
             decoration: BoxDecoration(
-              color: Colors.green.withOpacity(0.2),
+              color: AppColors.success.withValues(alpha: 0.12),
               borderRadius: BorderRadius.circular(20),
             ),
             child: const Text(
-              "Actif",
-              style: TextStyle(color: Colors.green, fontSize: 12),
+              'Actif',
+              style: TextStyle(
+                  color: AppColors.success,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w600),
             ),
           ),
         ],

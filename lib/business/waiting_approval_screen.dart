@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
-import 'package:firebase_auth/firebase_auth.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
+import '../models/user_model.dart';
+import '../services/auth_service.dart';
+import '../theme/app_theme.dart';
 import '../business/dashboard_screen.dart';
 
 class WaitingApprovalScreen extends StatelessWidget {
@@ -8,34 +9,38 @@ class WaitingApprovalScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final uid = FirebaseAuth.instance.currentUser!.uid;
+    final uid = AuthService.currentUid ?? '';
 
     return Scaffold(
-      backgroundColor: const Color(0xFF0F0B1F),
-
-      body: StreamBuilder<DocumentSnapshot>(
-        stream: FirebaseFirestore.instance
-            .collection('users')
-            .doc(uid)
-            .snapshots(),
-
+      backgroundColor: AppColors.bg,
+      body: StreamBuilder<UserModel?>(
+        stream: AuthService.watchCurrentUser(),
         builder: (context, snapshot) {
           if (!snapshot.hasData) {
-            return const Center(child: CircularProgressIndicator());
+            return const Center(
+              child: CircularProgressIndicator(color: AppColors.primary),
+            );
           }
 
-          final data = snapshot.data!;
-          final status = data['status'];
+          final user = snapshot.data;
 
-          /// 🔥 إذا تولي active → ندخلو dashboard
-          if (status == "active") {
+          if (user?.status == UserStatus.active) {
             Future.microtask(() {
               ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text("✅ Votre compte a été accepté !"),
+                SnackBar(
+                  content: const Row(
+                    children: [
+                      Icon(Icons.check_circle_rounded, color: Colors.white),
+                      SizedBox(width: 10),
+                      Text('Votre compte a été accepté !'),
+                    ],
+                  ),
+                  backgroundColor: AppColors.success,
+                  behavior: SnackBarBehavior.floating,
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12)),
                 ),
               );
-
               Navigator.pushReplacement(
                 context,
                 MaterialPageRoute(
@@ -45,59 +50,93 @@ class WaitingApprovalScreen extends StatelessWidget {
             });
           }
 
-          /// 🔥 UI attente
-          return Center(
+          return SafeArea(
             child: Padding(
-              padding: const EdgeInsets.all(25),
-
+              padding: const EdgeInsets.all(28),
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-
+                  // Icon
                   Container(
-                    padding: const EdgeInsets.all(20),
+                    width: 96,
+                    height: 96,
                     decoration: const BoxDecoration(
+                      gradient: AppColors.primaryGradient,
                       shape: BoxShape.circle,
-                      gradient: LinearGradient(
-                        colors: [Color(0xFF6C47FF), Color(0xFF9333EA)],
-                      ),
                     ),
                     child: const Icon(
-                      Icons.hourglass_top,
+                      Icons.hourglass_top_rounded,
                       color: Colors.white,
-                      size: 40,
+                      size: 44,
                     ),
                   ),
 
-                  const SizedBox(height: 30),
+                  const SizedBox(height: 28),
 
                   const Text(
-                    "Merci pour votre inscription 🙏",
+                    'Merci pour votre inscription',
                     textAlign: TextAlign.center,
                     style: TextStyle(
-                      color: Colors.white,
+                      color: AppColors.textDark,
                       fontSize: 22,
-                      fontWeight: FontWeight.bold,
+                      fontWeight: FontWeight.w800,
                     ),
                   ),
 
-                  const SizedBox(height: 15),
+                  const SizedBox(height: 12),
 
                   const Text(
-                    "Votre compte est en attente de validation par l’administrateur.",
+                    "Votre compte est en attente de validation par l'administrateur.",
                     textAlign: TextAlign.center,
-                    style: TextStyle(color: Colors.white54),
+                    style: TextStyle(
+                      color: AppColors.textMuted,
+                      fontSize: 14,
+                      height: 1.5,
+                    ),
                   ),
 
-                  const SizedBox(height: 30),
+                  const SizedBox(height: 12),
 
-                  ElevatedButton(
-                    onPressed: () async {
-                      await FirebaseAuth.instance.signOut();
-                      Navigator.pop(context);
+                  Container(
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      color: AppColors.warning.withValues(alpha: 0.1),
+                      borderRadius: BorderRadius.circular(14),
+                      border: Border.all(
+                          color: AppColors.warning.withValues(alpha: 0.3)),
+                    ),
+                    child: const Row(
+                      children: [
+                        Icon(Icons.info_outline_rounded,
+                            color: AppColors.warning, size: 20),
+                        SizedBox(width: 10),
+                        Expanded(
+                          child: Text(
+                            'Vous recevrez une notification dès que votre compte sera activé.',
+                            style: TextStyle(
+                              color: AppColors.warning,
+                              fontSize: 12,
+                              height: 1.4,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+
+                  const SizedBox(height: 36),
+
+                  GradientButton(
+                    label: 'Se déconnecter',
+                    icon: Icons.logout_rounded,
+                    gradient: const LinearGradient(
+                      colors: [Color(0xFFEF4444), Color(0xFFDC2626)],
+                    ),
+                    onTap: () async {
+                      await AuthService.signOut();
+                      if (context.mounted) Navigator.pop(context);
                     },
-                    child: const Text("Se déconnecter"),
-                  )
+                  ),
                 ],
               ),
             ),
