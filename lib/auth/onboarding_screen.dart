@@ -108,13 +108,53 @@ class _OnboardingScreenState extends State<OnboardingScreen>
           SafeArea(
             child: Column(
               children: [
-                // Skip button
+                // Top bar: wordmark + skip
                 Padding(
                   padding: const EdgeInsets.symmetric(
                       horizontal: 20, vertical: 8),
                   child: Row(
-                    mainAxisAlignment: MainAxisAlignment.end,
                     children: [
+                      // PromoCity wordmark
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 10, vertical: 5),
+                        decoration: BoxDecoration(
+                          color: Colors.white.withValues(alpha: 0.18),
+                          borderRadius: BorderRadius.circular(20),
+                          border: Border.all(
+                              color: Colors.white.withValues(alpha: 0.35),
+                              width: 1),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Container(
+                              width: 20,
+                              height: 20,
+                              decoration: BoxDecoration(
+                                color: Colors.white.withValues(alpha: 0.3),
+                                shape: BoxShape.circle,
+                              ),
+                              child: const Icon(
+                                Icons.local_offer_rounded,
+                                color: Colors.white,
+                                size: 12,
+                              ),
+                            ),
+                            const SizedBox(width: 6),
+                            const Text(
+                              'PromoCity',
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontSize: 13,
+                                fontWeight: FontWeight.w800,
+                                letterSpacing: -0.3,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const Spacer(),
                       TextButton(
                         onPressed: _goLogin,
                         child: Text(

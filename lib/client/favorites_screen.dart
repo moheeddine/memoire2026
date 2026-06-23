@@ -8,6 +8,7 @@ import '../services/promo_service.dart';
 import '../services/business_service.dart';
 import '../theme/app_theme.dart';
 import '../widgets/client_navbar.dart';
+import '../widgets/notification_overlay.dart';
 import 'promo_detail_screen.dart';
 
 class FavoritesScreen extends StatelessWidget {
@@ -17,7 +18,9 @@ class FavoritesScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     final uid = AuthService.currentUid;
 
-    return Scaffold(
+    return NotificationWrapper(
+      userId: uid ?? '',
+      child: Scaffold(
       backgroundColor: AppColors.bg,
       body: CustomScrollView(
         slivers: [
@@ -25,7 +28,13 @@ class FavoritesScreen extends StatelessWidget {
             pinned: true,
             backgroundColor: Colors.transparent,
             automaticallyImplyLeading: false,
-            expandedHeight: 120,
+            expandedHeight: 140,
+            actions: uid == null ? null : [
+              Padding(
+                padding: const EdgeInsets.only(right: 8, top: 4),
+                child: NotificationBell(userId: uid),
+              ),
+            ],
             flexibleSpace: FlexibleSpaceBar(
               background: Container(
                 decoration: const BoxDecoration(
@@ -75,10 +84,28 @@ class FavoritesScreen extends StatelessWidget {
                 stream: FavoriteService.watchFavorites(uid),
                 builder: (context, snap) {
                   if (snap.connectionState == ConnectionState.waiting) {
-                    return const Padding(
-                      padding: EdgeInsets.only(top: 80),
+                    return ListView(
+                      shrinkWrap: true,
+                      physics: const NeverScrollableScrollPhysics(),
+                      padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+                      children: const [
+                        AppSkeletonCard(),
+                        AppSkeletonCard(),
+                        AppSkeletonCard(),
+                        AppSkeletonCard(),
+                      ],
+                    );
+                  }
+                  if (snap.hasError) {
+                    return Padding(
+                      padding: const EdgeInsets.only(top: 80),
                       child: Center(
-                        child: CircularProgressIndicator(color: AppColors.primary),
+                        child: Text(
+                          snap.error.toString(),
+                          style:
+                              const TextStyle(color: AppColors.textMuted),
+                          textAlign: TextAlign.center,
+                        ),
                       ),
                     );
                   }
@@ -94,7 +121,7 @@ class FavoritesScreen extends StatelessWidget {
                           Container(
                             width: 80,
                             height: 80,
-                            decoration: BoxDecoration(
+                            decoration: const BoxDecoration(
                               color: AppColors.accentLight,
                               shape: BoxShape.circle,
                             ),
@@ -149,7 +176,7 @@ class FavoritesScreen extends StatelessWidget {
         ],
       ),
       bottomNavigationBar: const ClientNavbar(currentIndex: 1),
-    );
+    )); // NotificationWrapper
   }
 }
 
@@ -175,6 +202,11 @@ class _PromoFavCard extends StatelessWidget {
 
         final promo = snap.data!;
 
+        // Masquer les promos expirées en attendant la suppression par Cloud Function
+        if (promo.isExpired || !promo.isActive) {
+          return const _DeletedCard();
+        }
+
         return _FavCard(
           title: promo.title,
           subtitle: promo.businessName ?? '',
@@ -183,6 +215,7 @@ class _PromoFavCard extends StatelessWidget {
           icon: Icons.local_offer_rounded,
           iconBgColor: AppColors.accentLight,
           iconColor: AppColors.accent,
+          imageUrl: promo.imageUrls.firstOrNull,
           onTap: () => Navigator.push(
             context,
             MaterialPageRoute(builder: (_) => PromoDetailScreen(promo: promo)),
@@ -267,13 +300,14 @@ class _BusinessFavCard extends StatelessWidget {
 // ─── SHARED CARD ─────────────────────────────────────────────────────────────
 
 class _FavCard extends StatelessWidget {
-  final String title;
-  final String subtitle;
-  final String badge;
-  final Color badgeColor;
+  final String   title;
+  final String   subtitle;
+  final String   badge;
+  final Color    badgeColor;
   final IconData icon;
-  final Color iconBgColor;
-  final Color iconColor;
+  final Color    iconBgColor;
+  final Color    iconColor;
+  final String?  imageUrl;
   final VoidCallback onTap;
   final VoidCallback onRemove;
 
@@ -287,6 +321,7 @@ class _FavCard extends StatelessWidget {
     required this.iconColor,
     required this.onTap,
     required this.onRemove,
+    this.imageUrl,
   });
 
   @override
@@ -310,14 +345,22 @@ class _FavCard extends StatelessWidget {
         ),
         child: Row(
           children: [
-            Container(
-              width: 48,
-              height: 48,
-              decoration: BoxDecoration(
-                color: iconBgColor,
-                borderRadius: BorderRadius.circular(14),
-              ),
-              child: Icon(icon, color: iconColor, size: 22),
+            // ── Thumbnail or fallback icon ──────────────────────────────
+            ClipRRect(
+              borderRadius: BorderRadius.circular(12),
+              child: imageUrl != null
+                  ? Image.network(
+                      imageUrl!,
+                      width: 56,
+                      height: 56,
+                      fit: BoxFit.cover,
+                      loadingBuilder: (_, child, progress) => progress == null
+                          ? child
+                          : _iconBox(iconBgColor, icon, iconColor),
+                      errorBuilder: (_, __, ___) =>
+                          _iconBox(iconBgColor, icon, iconColor),
+                    )
+                  : _iconBox(iconBgColor, icon, iconColor),
             ),
             const SizedBox(width: 12),
             Expanded(
@@ -338,6 +381,8 @@ class _FavCard extends StatelessWidget {
                   Text(
                     subtitle,
                     style: const TextStyle(color: AppColors.textMuted, fontSize: 12),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
                   ),
                 ],
               ),
@@ -369,6 +414,13 @@ class _FavCard extends StatelessWidget {
       ),
     );
   }
+
+  Widget _iconBox(Color bg, IconData ico, Color color) => Container(
+        width: 56,
+        height: 56,
+        color: bg,
+        child: Icon(ico, color: color, size: 22),
+      );
 }
 
 // ─── UTILITY CARDS ───────────────────────────────────────────────────────────

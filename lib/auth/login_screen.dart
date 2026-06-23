@@ -1,9 +1,37 @@
 import 'package:flutter/material.dart';
-import 'package:firebase_auth/firebase_auth.dart';
 import '../theme/app_theme.dart';
 import '../services/auth_service.dart';
 import '../models/user_model.dart';
+import '../utils/app_routes.dart';
+import '../utils/error_handler.dart';
+import '../widgets/required_label.dart';
 import 'register_screen.dart';
+import 'forgot_password_screen.dart';
+import '../utils/validators.dart';
+
+// Google SVG-less icon using a colored "G" on white
+class _GoogleIcon extends StatelessWidget {
+  const _GoogleIcon();
+  @override
+  Widget build(BuildContext context) => Container(
+        width: 22,
+        height: 22,
+        decoration: const BoxDecoration(
+          color: Colors.white,
+          shape: BoxShape.circle,
+        ),
+        child: const Center(
+          child: Text(
+            'G',
+            style: TextStyle(
+              color: Color(0xFF4285F4),
+              fontWeight: FontWeight.w800,
+              fontSize: 14,
+            ),
+          ),
+        ),
+      );
+}
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -53,65 +81,62 @@ class _LoginScreenState extends State<LoginScreen>
     try {
       final user = await AuthService.signIn(
         _emailCtrl.text.trim(),
-        _passCtrl.text.trim(),
+        _passCtrl.text,
       );
       if (!mounted) return;
       switch (user.role) {
         case UserRole.client:
-          Navigator.pushReplacementNamed(context, '/home');
+          Navigator.pushReplacementNamed(context, AppRoutes.home);
         case UserRole.entreprise:
           Navigator.pushReplacementNamed(
             context,
             user.status == UserStatus.pending
-                ? '/waiting'
-                : '/business_dashboard',
+                ? AppRoutes.waiting
+                : AppRoutes.businessDashboard,
           );
         case UserRole.admin:
-          Navigator.pushReplacementNamed(context, '/admin_dashboard');
+          Navigator.pushReplacementNamed(context, AppRoutes.adminDashboard);
         default:
-          Navigator.pushReplacementNamed(context, '/home');
+          Navigator.pushReplacementNamed(context, AppRoutes.home);
       }
-    } on FirebaseAuthException catch (e) {
-      if (mounted) _err(_authMsg(e.code));
-    } catch (_) {
-      if (mounted) _err('Une erreur est survenue. Réessayez.');
+    } catch (e) {
+      if (mounted) AppErrorHandler.showError(context, e, logContext: 'Login');
     } finally {
       if (mounted) setState(() => _loading = false);
     }
   }
 
-  Future<void> _resetPassword() async {
-    final email = _emailCtrl.text.trim();
-    if (email.isEmpty) {
-      _err('Entrez votre email pour réinitialiser le mot de passe.');
-      return;
-    }
+  Future<void> _googleLogin() async {
+    setState(() => _loading = true);
     try {
-      await AuthService.sendPasswordReset(email);
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-          content: Text('Email de réinitialisation envoyé !'),
-          backgroundColor: AppColors.success,
-        ));
+      final user = await AuthService.signInWithGoogle();
+      if (!mounted) return;
+      switch (user.role) {
+        case UserRole.client:
+          Navigator.pushReplacementNamed(context, AppRoutes.home);
+        case UserRole.entreprise:
+          Navigator.pushReplacementNamed(
+            context,
+            user.status == UserStatus.pending ? AppRoutes.waiting : AppRoutes.businessDashboard,
+          );
+        case UserRole.admin:
+          Navigator.pushReplacementNamed(context, AppRoutes.adminDashboard);
+        default:
+          Navigator.pushReplacementNamed(context, AppRoutes.home);
       }
-    } on FirebaseAuthException catch (e) {
-      if (mounted) _err(_authMsg(e.code));
+    } catch (e) {
+      AppErrorHandler.log('Google sign-in', e);
+      final msg = e.toString().toLowerCase().contains('cancel')
+          ? 'Connexion annulée.'
+          : AppErrorHandler.getMessage(e);
+      if (mounted) _err(msg);
+    } finally {
+      if (mounted) setState(() => _loading = false);
     }
   }
 
-  void _err(String msg) => ScaffoldMessenger.of(context)
-      .showSnackBar(SnackBar(content: Text(msg)));
-
-  String _authMsg(String code) {
-    switch (code) {
-      case 'user-not-found':    return 'Aucun compte avec cet email.';
-      case 'wrong-password':
-      case 'invalid-credential':return 'Email ou mot de passe incorrect.';
-      case 'invalid-email':     return 'Format email invalide.';
-      case 'user-disabled':     return 'Ce compte a été désactivé.';
-      case 'too-many-requests': return 'Trop de tentatives. Réessayez plus tard.';
-      default:                  return 'Erreur : $code';
-    }
+  void _err(String msg) {
+    AppErrorHandler.showMessage(context, msg, isError: true);
   }
 
   @override
@@ -176,11 +201,12 @@ class _LoginScreenState extends State<LoginScreen>
                         ),
                         const SizedBox(height: 14),
                         const Text(
-                          'CityOne',
+                          'PromoCity',
                           style: TextStyle(
                             color: Colors.white,
                             fontSize: 28,
                             fontWeight: FontWeight.w800,
+                            letterSpacing: -0.5,
                           ),
                         ),
                         const SizedBox(height: 4),
@@ -217,6 +243,7 @@ class _LoginScreenState extends State<LoginScreen>
                         ),
                         child: Form(
                           key: _formKey,
+                          autovalidateMode: AutovalidateMode.onUserInteraction,
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
@@ -230,41 +257,26 @@ class _LoginScreenState extends State<LoginScreen>
                               ),
                               const SizedBox(height: 20),
 
-                              // Email field
+                              const RequiredLabel('Email'),
                               _buildField(
                                 index: 0,
                                 ctrl: _emailCtrl,
                                 hint: 'Email',
                                 icon: Icons.mail_outline_rounded,
                                 keyboard: TextInputType.emailAddress,
-                                validator: (v) {
-                                  if (v == null || v.trim().isEmpty) {
-                                    return 'Email requis';
-                                  }
-                                  if (!RegExp(r'^[\w\.-]+@[\w\.-]+\.\w+$')
-                                      .hasMatch(v.trim())) {
-                                    return 'Format invalide';
-                                  }
-                                  return null;
-                                },
+                                validator: Validators.email,
                               ),
 
                               const SizedBox(height: 14),
 
-                              // Password field
+                              const RequiredLabel('Mot de passe'),
                               _buildField(
                                 index: 1,
                                 ctrl: _passCtrl,
                                 hint: 'Mot de passe',
                                 icon: Icons.lock_outline_rounded,
                                 isPassword: true,
-                                validator: (v) {
-                                  if (v == null || v.isEmpty) {
-                                    return 'Mot de passe requis';
-                                  }
-                                  if (v.length < 6) return 'Min. 6 caractères';
-                                  return null;
-                                },
+                                validator: Validators.loginPassword,
                               ),
 
                               const SizedBox(height: 10),
@@ -272,7 +284,16 @@ class _LoginScreenState extends State<LoginScreen>
                               Align(
                                 alignment: Alignment.centerRight,
                                 child: TextButton(
-                                  onPressed: _resetPassword,
+                                  onPressed: () => Navigator.push(
+                                    context,
+                                    MaterialPageRoute(
+                                      builder: (_) => ForgotPasswordScreen(
+                                        initialEmail: _emailCtrl.text.trim().isNotEmpty
+                                            ? _emailCtrl.text.trim()
+                                            : null,
+                                      ),
+                                    ),
+                                  ),
                                   child: const Text(
                                     'Mot de passe oublié ?',
                                     style: TextStyle(
@@ -309,6 +330,54 @@ class _LoginScreenState extends State<LoginScreen>
                                   ),
                                 ),
                               ),
+
+                              const SizedBox(height: 16),
+
+                              // Divider
+                              const Row(
+                                children: [
+                                  Expanded(child: Divider(color: AppColors.border)),
+                                  Padding(
+                                    padding: EdgeInsets.symmetric(horizontal: 12),
+                                    child: Text(
+                                      'ou',
+                                      style: TextStyle(
+                                        color: AppColors.textLight,
+                                        fontSize: 12,
+                                      ),
+                                    ),
+                                  ),
+                                  Expanded(child: Divider(color: AppColors.border)),
+                                ],
+                              ),
+
+                              const SizedBox(height: 16),
+
+                              // Google button
+                              SizedBox(
+                                width: double.infinity,
+                                child: OutlinedButton.icon(
+                                  onPressed: _loading ? null : _googleLogin,
+                                  icon: const _GoogleIcon(),
+                                  label: const Text(
+                                    'Continuer avec Google',
+                                    style: TextStyle(
+                                      fontWeight: FontWeight.w600,
+                                      fontSize: 14,
+                                    ),
+                                  ),
+                                  style: OutlinedButton.styleFrom(
+                                    padding: const EdgeInsets.symmetric(
+                                        vertical: 14),
+                                    foregroundColor: AppColors.textDark,
+                                    side: const BorderSide(color: AppColors.border, width: 1.5),
+                                    shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(14),
+                                    ),
+                                    backgroundColor: Colors.white,
+                                  ),
+                                ),
+                              ),
                             ],
                           ),
                         ),
@@ -332,7 +401,7 @@ class _LoginScreenState extends State<LoginScreen>
                           onTap: () => Navigator.push(
                             context,
                             MaterialPageRoute(
-                                builder: (_) => RegisterScreen()),
+                                builder: (_) => const RegisterScreen()),
                           ),
                           child: const Text(
                             "S'inscrire",

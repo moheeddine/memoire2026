@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../theme/app_theme.dart';
 import '../services/auth_service.dart';
 import '../models/user_model.dart';
+import '../utils/app_routes.dart';
 import 'onboarding_screen.dart';
 
 class SplashScreen extends StatefulWidget {
@@ -91,16 +92,16 @@ class _SplashScreenState extends State<SplashScreen>
       }
       switch (userModel.role) {
         case UserRole.client:
-          Navigator.pushReplacementNamed(context, '/home');
+          Navigator.pushReplacementNamed(context, AppRoutes.home);
         case UserRole.entreprise:
           Navigator.pushReplacementNamed(
             context,
             userModel.status == UserStatus.pending
-                ? '/waiting'
-                : '/business_dashboard',
+                ? AppRoutes.waiting
+                : AppRoutes.businessDashboard,
           );
         case UserRole.admin:
-          Navigator.pushReplacementNamed(context, '/admin_dashboard');
+          Navigator.pushReplacementNamed(context, AppRoutes.adminDashboard);
         default:
           _goOnboarding();
       }
@@ -113,7 +114,7 @@ class _SplashScreenState extends State<SplashScreen>
     Navigator.pushReplacement(
       context,
       PageRouteBuilder(
-        pageBuilder: (_, __, ___) => OnboardingScreen(),
+        pageBuilder: (_, __, ___) => const OnboardingScreen(),
         transitionsBuilder: (_, animation, __, child) =>
             FadeTransition(opacity: animation, child: child),
         transitionDuration: const Duration(milliseconds: 500),
@@ -209,17 +210,17 @@ class _SplashScreenState extends State<SplashScreen>
                       child: Column(
                         children: [
                           const Text(
-                            'CityOne',
+                            'PromoCity',
                             style: TextStyle(
                               color: Colors.white,
                               fontSize: 42,
                               fontWeight: FontWeight.w800,
-                              letterSpacing: -0.5,
+                              letterSpacing: -1.0,
                             ),
                           ),
                           const SizedBox(height: 8),
                           Text(
-                            'Découvrez les promos autour de vous',
+                            'Les meilleures promos près de vous',
                             style: TextStyle(
                               color: Colors.white.withValues(alpha: 0.85),
                               fontSize: 15,

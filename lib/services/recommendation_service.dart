@@ -3,91 +3,148 @@ import '../models/promo_model.dart';
 import 'promo_service.dart';
 import 'favorite_service.dart';
 
+/// Advanced AI recommendation engine.
+///
+/// Score formula (weights sum to 1.0):
+///   proximity      × 0.25
+///   isFavorite     × 0.20
+///   categoryAffin  × 0.15
+///   discount       × 0.15  ← new: higher discount → higher score
+///   popularity     × 0.10
+///   flashBonus     × 0.08
+///   recency        × 0.07
 class RecommendationService {
-  // ─── ALGORITHME DE SCORE ──────────────────────────────────────────────────
-  //
-  // Score final = (proximité * 0.40)
-  //             + (catégorie préférée * 0.40)
-  //             + (popularité * 0.20)
-  //
-  // - Proximité   : normalisée sur 10 km max (1.0 = ≤ 500m, 0.0 = ≥ 10km)
-  // - Catégorie   : 1.0 si l'user a favoris dans cette catégorie, 0.0 sinon
-  // - Popularité  : normalisée sur le max de vues de la session
+  static const double _maxDistM  = 10000; // 10 km cap
+  static const double _wProx     = 0.25;
+  static const double _wFav      = 0.20;
+  static const double _wCat      = 0.15;
+  static const double _wDiscount = 0.15;
+  static const double _wPop      = 0.10;
+  static const double _wFlash    = 0.08;
+  static const double _wRecency  = 0.07;
 
-  static const double _maxDistanceM  = 10000; // 10 km
-  static const double _wProximity    = 0.40;
-  static const double _wCategory     = 0.40;
-  static const double _wPopularity   = 0.20;
-
-  // ─── POINT D'ENTRÉE PUBLIC ────────────────────────────────────────────────
+  // ─── PUBLIC API ───────────────────────────────────────────────────────────
 
   static Future<List<PromoModel>> getRecommendations({
     required String userId,
     required double userLat,
     required double userLng,
-    int limit = 4,
+    int limit = 5,
   }) async {
-    // 1. Charger promos approuvées avec données business (JOIN inclus)
-    final promos = await PromoService.getApprovedWithBusinessData();
+    final all = await PromoService.getApprovedWithBusinessData();
+    if (all.isEmpty) return [];
+    // Defensive filter: cache may contain promos that expired mid-session.
+    final promos = all.where((p) => p.isEffectivelyActive).toList();
     if (promos.isEmpty) return [];
 
-    // 2. Filtrer celles qui ont une position connue
-    final withPos = promos
-        .where((p) => p.lat != null && p.lng != null)
-        .toList();
+    final withPos = promos.where((p) => p.lat != null && p.lng != null).toList();
     if (withPos.isEmpty) return promos.take(limit).toList();
 
-    // 3. Enrichir avec la distance
+    // Enrich with distance
     final withDist = withPos.map((p) {
       final dist = Geolocator.distanceBetween(
-        userLat, userLng, p.lat!, p.lng!,
-      );
+          userLat, userLng, p.lat!, p.lng!);
       return p.withDistance(dist);
     }).toList();
 
-    // 4. Récupérer les catégories préférées de l'user
-    final prefCats = await _getPreferredCategories(userId, withDist);
+    // Fetch user data for scoring
+    final favoritePromoIds  = await FavoriteService.getFavoritePromoIds(userId);
+    final preferredCats     = _extractCategories(withDist, favoritePromoIds);
+    final maxViews          = _maxValue(withDist, (p) => p.views + p.clicks);
+    final now               = DateTime.now();
 
-    // 5. Calculer le score max de vues pour normalisation
-    final maxViews = withDist
-        .map((p) => p.views)
-        .fold<int>(1, (prev, v) => v > prev ? v : prev);
-
-    // 6. Calculer le score de chaque promo
+    // Score every promo
     final scored = withDist.map((p) {
       final score = _score(
-        promo:         p,
-        prefCats:      prefCats,
-        maxViews:      maxViews,
+        promo:          p,
+        isFav:          favoritePromoIds.contains(p.id),
+        prefCats:       preferredCats,
+        maxEngagement:  maxViews,
+        now:            now,
       );
       return _ScoredPromo(promo: p, score: score);
     }).toList();
 
-    // 7. Trier DESC par score et retourner les N premiers
-    scored.sort((a, b) => b.score.compareTo(a.score));
+    // Sort by score desc, break ties by distance
+    scored.sort((a, b) {
+      final diff = b.score.compareTo(a.score);
+      if (diff != 0) return diff;
+      final dA = a.promo.distanceMeters ?? double.maxFinite;
+      final dB = b.promo.distanceMeters ?? double.maxFinite;
+      return dA.compareTo(dB);
+    });
+
     return scored.take(limit).map((s) => s.promo).toList();
   }
 
-  // ─── SCORE ────────────────────────────────────────────────────────────────
+  /// Returns promos sorted by popularity / distance ratio.
+  static Future<List<PromoModel>> getPopularNearby({
+    required double userLat,
+    required double userLng,
+    int limit = 5,
+  }) async {
+    final all = await PromoService.getApprovedWithBusinessData();
+    if (all.isEmpty) return [];
+    final promos = all.where((p) => p.isEffectivelyActive).toList();
+    if (promos.isEmpty) return [];
+
+    final withPos = promos.where((p) => p.lat != null && p.lng != null).toList();
+    if (withPos.isEmpty) return promos.take(limit).toList();
+
+    final withDist = withPos.map((p) {
+      final dist = Geolocator.distanceBetween(
+          userLat, userLng, p.lat!, p.lng!);
+      return p.withDistance(dist);
+    }).toList();
+
+    // Score = (views + used * 2) / (distanceKm + 1)
+    withDist.sort((a, b) {
+      final popA = (a.views + a.used * 2).toDouble();
+      final popB = (b.views + b.used * 2).toDouble();
+      final dkmA = (a.distanceMeters ?? _maxDistM) / 1000;
+      final dkmB = (b.distanceMeters ?? _maxDistM) / 1000;
+      final sA = popA / (dkmA + 1);
+      final sB = popB / (dkmB + 1);
+      return sB.compareTo(sA);
+    });
+
+    return withDist.take(limit).toList();
+  }
+
+  // ─── SCORING ──────────────────────────────────────────────────────────────
 
   static double _score({
     required PromoModel  promo,
+    required bool        isFav,
     required Set<String> prefCats,
-    required int         maxViews,
+    required int         maxEngagement,
+    required DateTime    now,
   }) {
-    final proximityScore = _proximityScore(promo.distanceMeters ?? _maxDistanceM);
-    final categoryScore  = _categoryScore(promo.category, prefCats);
-    final popularityScore = _popularityScore(promo.views, maxViews);
+    final prox     = _proximityScore(promo.distanceMeters ?? _maxDistM);
+    final fav      = isFav ? 1.0 : 0.0;
+    final cat      = _categoryScore(promo.category, prefCats);
+    final discount = _discountScore(promo.effectiveDiscountPct);
+    final pop      = _popularityScore(promo.views + promo.clicks, maxEngagement);
+    final flash    = _flashScore(promo, now);
+    final recency  = _recencyScore(promo.createdAt, now);
 
-    return (proximityScore * _wProximity)
-         + (categoryScore  * _wCategory)
-         + (popularityScore * _wPopularity);
+    return (prox     * _wProx)
+         + (fav      * _wFav)
+         + (cat      * _wCat)
+         + (discount * _wDiscount)
+         + (pop      * _wPop)
+         + (flash    * _wFlash)
+         + (recency  * _wRecency);
   }
 
-  static double _proximityScore(double distanceM) {
-    if (distanceM <= 0) return 1.0;
-    if (distanceM >= _maxDistanceM) return 0.0;
-    return 1.0 - (distanceM / _maxDistanceM);
+  /// Normalises discount % to [0,1]. 70%+ → max score.
+  static double _discountScore(double pct) =>
+      (pct / 70.0).clamp(0.0, 1.0);
+
+  static double _proximityScore(double distM) {
+    if (distM <= 0) return 1.0;
+    if (distM >= _maxDistM) return 0.0;
+    return 1.0 - (distM / _maxDistM);
   }
 
   static double _categoryScore(String? cat, Set<String> prefCats) {
@@ -95,34 +152,48 @@ class RecommendationService {
     return prefCats.contains(cat) ? 1.0 : 0.0;
   }
 
-  static double _popularityScore(int views, int maxViews) {
-    if (maxViews <= 0) return 0.0;
-    return views / maxViews;
+  static double _popularityScore(int engagement, int maxEngagement) {
+    if (maxEngagement <= 0) return 0.0;
+    return (engagement / maxEngagement).clamp(0.0, 1.0);
   }
 
-  // ─── CATÉGORIES PRÉFÉRÉES ─────────────────────────────────────────────────
-  // Déduites depuis les promos favorites de l'utilisateur
+  static double _flashScore(PromoModel promo, DateTime now) {
+    if (!promo.isFlashDeal || promo.flashEndTime == null) return 0.0;
+    final remaining = promo.flashEndTime!.difference(now);
+    if (remaining.isNegative) return 0.0;
+    if (remaining.inHours < 2) return 1.0;   // urgent
+    if (remaining.inHours < 6) return 0.7;
+    return 0.4;
+  }
 
-  static Future<Set<String>> _getPreferredCategories(
-    String userId,
-    List<PromoModel> allPromos,
-  ) async {
-    try {
-      final favoriteIds = await FavoriteService.getFavoritePromoIds(userId);
-      if (favoriteIds.isEmpty) return {};
+  static double _recencyScore(DateTime? createdAt, DateTime now) {
+    if (createdAt == null) return 0.0;
+    final ageDays = now.difference(createdAt).inDays;
+    if (ageDays <= 1)  return 1.0;
+    if (ageDays <= 7)  return 0.75;
+    if (ageDays <= 30) return 0.40;
+    return 0.0;
+  }
 
-      final favPromos = allPromos
-          .where((p) => favoriteIds.contains(p.id) && p.category != null)
-          .toList();
+  // ─── HELPERS ──────────────────────────────────────────────────────────────
 
-      return favPromos.map((p) => p.category!).toSet();
-    } catch (_) {
-      return {};
-    }
+  static Set<String> _extractCategories(
+      List<PromoModel> promos, Set<String> favoriteIds) {
+    return promos
+        .where((p) => favoriteIds.contains(p.id) && p.category != null)
+        .map((p) => p.category!)
+        .toSet();
+  }
+
+  static int _maxValue(List<PromoModel> promos, int Function(PromoModel) fn) {
+    return promos.fold<int>(1, (prev, p) {
+      final v = fn(p);
+      return v > prev ? v : prev;
+    });
   }
 }
 
-// ─── DATA CLASS INTERNE ───────────────────────────────────────────────────────
+// ─── INTERNAL DATA CLASS ──────────────────────────────────────────────────────
 
 class _ScoredPromo {
   final PromoModel promo;

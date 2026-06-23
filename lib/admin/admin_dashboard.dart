@@ -1,14 +1,33 @@
 import 'package:flutter/material.dart';
 import '../models/business_model.dart';
+import '../models/notification_model.dart';
 import '../models/promo_model.dart';
 import '../models/user_model.dart';
 import '../services/auth_service.dart';
 import '../services/business_service.dart';
 import '../services/promo_service.dart';
-import '../services/notification_service.dart';
 import '../theme/app_theme.dart';
+import '../utils/app_routes.dart';
+import '../utils/error_handler.dart';
+import '../widgets/notification_overlay.dart';
 import 'manage_users.dart';
+import 'manage_companies.dart';
 import 'manage_promos.dart';
+import 'manage_categories.dart';
+import 'admin_notifications_screen.dart';
+import 'developer_panel.dart';
+import 'admin_settings_screen.dart';
+
+const _kAdminNav = [
+  {'icon': Icons.dashboard_rounded,      'label': 'Vue globale'},    // 0
+  {'icon': Icons.people_rounded,         'label': 'Utilisateurs'},   // 1
+  {'icon': Icons.store_rounded,          'label': 'Entreprises'},    // 2
+  {'icon': Icons.local_offer_rounded,    'label': 'Promotions'},     // 3
+  {'icon': Icons.category_rounded,       'label': 'Catégories'},     // 4
+  {'icon': Icons.notifications_rounded,  'label': 'Notifications'},  // 5
+  {'icon': Icons.developer_mode_rounded, 'label': 'Développeur'},    // 6
+  {'icon': Icons.settings_rounded,       'label': 'Paramètres'},     // 7
+];
 
 class AdminDashboard extends StatefulWidget {
   const AdminDashboard({super.key});
@@ -19,106 +38,252 @@ class AdminDashboard extends StatefulWidget {
 
 class _AdminDashboardState extends State<AdminDashboard> {
   int _currentIndex = 0;
+  final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
+
+  String get _pageTitle => _kAdminNav[_currentIndex]['label'] as String;
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      key: _scaffoldKey,
       backgroundColor: AppColors.bg,
       appBar: AppBar(
-        backgroundColor: Colors.transparent,
+        backgroundColor: Colors.white,
         elevation: 0,
+        leading: IconButton(
+          icon: const Icon(Icons.menu_rounded, color: AppColors.textDark),
+          onPressed: () => _scaffoldKey.currentState?.openDrawer(),
+        ),
         title: ShaderMask(
           shaderCallback: (bounds) =>
               AppColors.mainGradient.createShader(bounds),
-          child: const Text(
-            'Administration',
-            style: TextStyle(
+          child: Text(
+            _pageTitle,
+            style: const TextStyle(
               color: Colors.white,
               fontWeight: FontWeight.w800,
-              fontSize: 20,
+              fontSize: 18,
             ),
           ),
         ),
         actions: [
-          IconButton(
-            icon: const Icon(Icons.logout_rounded, color: AppColors.textMuted),
-            onPressed: () async {
-              await AuthService.signOut();
-              if (mounted) Navigator.pushReplacementNamed(context, '/login');
-            },
+          // ── Cloche notifications admin ──────────────────────────────
+          Padding(
+            padding: const EdgeInsets.only(right: 8),
+            child: _AdminNotifBell(),
           ),
         ],
+        bottom: const PreferredSize(
+          preferredSize: Size.fromHeight(1),
+          child: Divider(height: 1, color: AppColors.border),
+        ),
       ),
-      body: _buildBody(),
-      bottomNavigationBar: _buildNavbar(),
+      drawer: _AdminDrawer(
+        currentIndex: _currentIndex,
+        onSelect: (i) {
+          setState(() => _currentIndex = i);
+          Navigator.pop(context);
+        },
+      ),
+      body: _AdminNotifWrapper(child: _buildBody()),
     );
   }
 
   Widget _buildBody() {
     switch (_currentIndex) {
-      case 0:  return const _OverviewTab();
+      case 0:
+        return _OverviewTab(
+          onNavigate: (i) => setState(() => _currentIndex = i),
+        );
       case 1:  return const ManageUsersScreen();
-      case 2:  return const ManagePromosScreen();
-      default: return const _OverviewTab();
+      case 2:  return const ManageCompaniesScreen();
+      case 3:  return const ManagePromosScreen();
+      case 4:  return const ManageCategoriesScreen();
+      case 5:  return const AdminNotificationsScreen();
+      case 6:  return const DeveloperPanel();
+      case 7:  return const AdminSettingsScreen();
+      default:
+        return _OverviewTab(
+          onNavigate: (i) => setState(() => _currentIndex = i),
+        );
     }
   }
+}
 
-  Widget _buildNavbar() {
-    final items = [
-      {'icon': Icons.dashboard_rounded,   'label': 'Vue globale'},
-      {'icon': Icons.people_rounded,      'label': 'Utilisateurs'},
-      {'icon': Icons.local_offer_rounded, 'label': 'Promos'},
-    ];
+// ─── ADMIN NOTIFICATION WRAPPER ───────────────────────────────────────────────
+// Encapsule le body du dashboard admin pour afficher les popups de notifications.
 
-    return Container(
-      height: 72,
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
-        boxShadow: [
-          BoxShadow(
-            color: AppColors.purple.withValues(alpha: 0.12),
-            blurRadius: 20,
-            offset: const Offset(0, -4),
+class _AdminNotifWrapper extends StatelessWidget {
+  final Widget child;
+  const _AdminNotifWrapper({required this.child});
+
+  @override
+  Widget build(BuildContext context) {
+    return NotificationWrapper(
+      userId: kAdminTarget,
+      child:  child,
+    );
+  }
+}
+
+// ─── ADMIN NOTIFICATION BELL ──────────────────────────────────────────────────
+
+class _AdminNotifBell extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    return const NotificationBell(
+      userId:    kAdminTarget,
+      iconColor: AppColors.textDark,
+    );
+  }
+}
+
+// ─── SIDEBAR DRAWER ───────────────────────────────────────────────────────────
+
+class _AdminDrawer extends StatelessWidget {
+  final int currentIndex;
+  final ValueChanged<int> onSelect;
+
+  const _AdminDrawer({required this.currentIndex, required this.onSelect});
+
+  @override
+  Widget build(BuildContext context) {
+    return Drawer(
+      backgroundColor: Colors.white,
+      child: Column(
+        children: [
+          // Gradient header
+          Container(
+            width: double.infinity,
+            padding: EdgeInsets.fromLTRB(
+                20, MediaQuery.of(context).padding.top + 24, 20, 28),
+            decoration: const BoxDecoration(
+              gradient: AppColors.mainGradient,
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Container(
+                  width: 56,
+                  height: 56,
+                  decoration: BoxDecoration(
+                    color: Colors.white.withValues(alpha: 0.2),
+                    shape: BoxShape.circle,
+                    border: Border.all(
+                        color: Colors.white.withValues(alpha: 0.4), width: 2),
+                  ),
+                  child: const Icon(Icons.admin_panel_settings_rounded,
+                      color: Colors.white, size: 28),
+                ),
+                const SizedBox(height: 14),
+                const Text(
+                  'Administration',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 20,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  'PromoCity Panel',
+                  style: TextStyle(
+                    color: Colors.white.withValues(alpha: 0.75),
+                    fontSize: 13,
+                  ),
+                ),
+              ],
+            ),
           ),
-        ],
-      ),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceAround,
-        children: List.generate(items.length, (i) {
-          final active = _currentIndex == i;
-          return GestureDetector(
-            onTap: () => setState(() => _currentIndex = i),
-            child: AnimatedContainer(
-              duration: const Duration(milliseconds: 200),
-              padding: EdgeInsets.symmetric(
-                  horizontal: active ? 16 : 12, vertical: 8),
-              decoration: BoxDecoration(
-                gradient: active ? AppColors.primaryGradient : null,
-                borderRadius: BorderRadius.circular(20),
-              ),
-              child: active
-                  ? Row(
-                      mainAxisSize: MainAxisSize.min,
+
+          const SizedBox(height: 12),
+
+          // Nav items
+          Expanded(
+            child: ListView.builder(
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              itemCount: _kAdminNav.length,
+              itemBuilder: (context, i) {
+                final active = currentIndex == i;
+                return GestureDetector(
+                  onTap: () => onSelect(i),
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 200),
+                    margin: const EdgeInsets.only(bottom: 4),
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 16, vertical: 14),
+                    decoration: BoxDecoration(
+                      gradient: active ? AppColors.primaryGradient : null,
+                      color: active ? null : Colors.transparent,
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                    child: Row(
                       children: [
-                        Icon(items[i]['icon'] as IconData,
-                            color: Colors.white, size: 18),
-                        const SizedBox(width: 6),
+                        Icon(
+                          _kAdminNav[i]['icon'] as IconData,
+                          color: active ? Colors.white : AppColors.textMuted,
+                          size: 20,
+                        ),
+                        const SizedBox(width: 14),
                         Text(
-                          items[i]['label'] as String,
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 12,
-                            fontWeight: FontWeight.w700,
+                          _kAdminNav[i]['label'] as String,
+                          style: TextStyle(
+                            color:
+                                active ? Colors.white : AppColors.textDark,
+                            fontWeight: active
+                                ? FontWeight.w700
+                                : FontWeight.w500,
+                            fontSize: 15,
                           ),
                         ),
                       ],
-                    )
-                  : Icon(items[i]['icon'] as IconData,
-                      color: AppColors.textMuted, size: 22),
+                    ),
+                  ),
+                );
+              },
             ),
-          );
-        }),
+          ),
+
+          // Logout at bottom
+          const Divider(height: 1, color: AppColors.border),
+          Padding(
+            padding: const EdgeInsets.all(16),
+            child: GestureDetector(
+              onTap: () async {
+                Navigator.pop(context);
+                await AuthService.signOut();
+                if (context.mounted) {
+                  Navigator.pushNamedAndRemoveUntil(
+                      context, AppRoutes.login, (_) => false);
+                }
+              },
+              child: Container(
+                padding: const EdgeInsets.symmetric(
+                    horizontal: 16, vertical: 14),
+                decoration: BoxDecoration(
+                  color: AppColors.error.withValues(alpha: 0.08),
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                child: const Row(
+                  children: [
+                    Icon(Icons.logout_rounded,
+                        color: AppColors.error, size: 20),
+                    SizedBox(width: 14),
+                    Text(
+                      'Se déconnecter',
+                      style: TextStyle(
+                        color: AppColors.error,
+                        fontWeight: FontWeight.w600,
+                        fontSize: 15,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+          SizedBox(height: MediaQuery.of(context).padding.bottom),
+        ],
       ),
     );
   }
@@ -127,146 +292,244 @@ class _AdminDashboardState extends State<AdminDashboard> {
 // ─── OVERVIEW TAB ─────────────────────────────────────────────────────────────
 
 class _OverviewTab extends StatelessWidget {
-  const _OverviewTab();
+  final ValueChanged<int> onNavigate;
+  const _OverviewTab({required this.onNavigate});
 
   @override
   Widget build(BuildContext context) {
+    final now = DateTime.now();
+    final greeting = now.hour < 12
+        ? 'Bonjour'
+        : now.hour < 18
+            ? 'Bon après-midi'
+            : 'Bonsoir';
+
     return SingleChildScrollView(
       padding: const EdgeInsets.all(20),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const _StatsRow(),
-          const SizedBox(height: 24),
-          _sectionHeader('Entreprises en attente'),
+          // Welcome header
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(20),
+            decoration: BoxDecoration(
+              gradient: AppColors.mainGradient,
+              borderRadius: BorderRadius.circular(20),
+              boxShadow: [
+                BoxShadow(
+                  color: AppColors.primary.withValues(alpha: 0.25),
+                  blurRadius: 20,
+                  offset: const Offset(0, 8),
+                ),
+              ],
+            ),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        '$greeting, Admin 👋',
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 20,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        'Tableau de bord PromoCity',
+                        style: TextStyle(
+                          color: Colors.white.withValues(alpha: 0.8),
+                          fontSize: 13,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                Container(
+                  width: 52,
+                  height: 52,
+                  decoration: BoxDecoration(
+                    color: Colors.white.withValues(alpha: 0.2),
+                    borderRadius: BorderRadius.circular(16),
+                  ),
+                  child: const Icon(Icons.admin_panel_settings_rounded,
+                      color: Colors.white, size: 28),
+                ),
+              ],
+            ),
+          ),
+
+          const SizedBox(height: 20),
+
+          const AppSectionTitle('Vue globale'),
+          const SizedBox(height: 12),
+
+          // ── KPI cards ───────────────────────────────────────────────
+          AppStatCard<List<UserModel>>(
+            label: 'Clients inscrits',
+            sublabel: 'Voir tous les utilisateurs',
+            icon: Icons.people_rounded,
+            color: AppColors.purple,
+            stream: AuthService.watchUsersByRole('client'),
+            count: (l) => l.length,
+            onTap: () => onNavigate(1),
+          ),
+          const SizedBox(height: 10),
+
+          Row(
+            children: [
+              Expanded(
+                child: AppStatCard<List<BusinessModel>>(
+                  label: 'Entreprises',
+                  sublabel: 'Total inscrites',
+                  icon: Icons.store_rounded,
+                  color: AppColors.blue,
+                  stream: BusinessService.watchAll(),
+                  count: (l) => l.length,
+                  compact: true,
+                  onTap: () => onNavigate(2),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: AppStatCard<List<BusinessModel>>(
+                  label: 'En attente',
+                  sublabel: 'À approuver',
+                  icon: Icons.hourglass_top_rounded,
+                  color: AppColors.warning,
+                  stream: BusinessService.watchPending(),
+                  count: (l) => l.length,
+                  compact: true,
+                  onTap: () => onNavigate(2),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+
+          Row(
+            children: [
+              Expanded(
+                child: AppStatCard<List<PromoModel>>(
+                  label: 'Promos actives',
+                  sublabel: 'Approuvées',
+                  icon: Icons.local_offer_rounded,
+                  color: AppColors.pink,
+                  stream: PromoService.watchByStatus('approved'),
+                  count: (l) => l.length,
+                  compact: true,
+                  onTap: () => onNavigate(3),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: AppStatCard<List<PromoModel>>(
+                  label: 'À modérer',
+                  sublabel: 'En attente',
+                  icon: Icons.pending_actions_rounded,
+                  color: AppColors.orange,
+                  stream: PromoService.watchByStatus('pending'),
+                  count: (l) => l.length,
+                  compact: true,
+                  onTap: () => onNavigate(3),
+                ),
+              ),
+            ],
+          ),
+
+          const SizedBox(height: 28),
+
+          // ── Quick actions ────────────────────────────────────────────
+          const AppSectionTitle('Actions rapides'),
+          const SizedBox(height: 12),
+          _QuickActions(onNavigate: onNavigate),
+
+          const SizedBox(height: 28),
+
+          // ── Pending businesses ───────────────────────────────────────
+          const AppSectionTitle('Entreprises en attente'),
           const SizedBox(height: 12),
           const _PendingBusinessesList(),
-          const SizedBox(height: 24),
-          _sectionHeader('Promos en attente'),
-          const SizedBox(height: 12),
-          const _PendingPromosList(),
         ],
       ),
     );
   }
+}
 
-  Widget _sectionHeader(String title) {
-    return Text(
-      title,
-      style: const TextStyle(
-        color: AppColors.textDark,
-        fontSize: 16,
-        fontWeight: FontWeight.w800,
+
+// ─── QUICK ACTIONS ────────────────────────────────────────────────────────────
+
+class _QuickAction {
+  final IconData icon;
+  final String   label;
+  final Color    color;
+  final int      navIndex;
+  const _QuickAction(this.icon, this.label, this.color, this.navIndex);
+}
+
+class _QuickActions extends StatelessWidget {
+  final ValueChanged<int> onNavigate;
+  const _QuickActions({required this.onNavigate});
+
+  static const _actions = [
+    _QuickAction(Icons.store_rounded,         'Entreprises',   AppColors.blue,    2),
+    _QuickAction(Icons.local_offer_rounded,   'Promotions',    AppColors.pink,    3),
+    _QuickAction(Icons.people_rounded,        'Utilisateurs',  AppColors.purple,  1),
+    _QuickAction(Icons.notifications_rounded, 'Notifications', AppColors.warning, 5),
+    _QuickAction(Icons.category_rounded,      'Catégories',    AppColors.success, 4),
+    _QuickAction(Icons.developer_mode_rounded,'Développeur',   AppColors.textMuted, 6),
+  ];
+
+  @override
+  Widget build(BuildContext context) {
+    return GridView.builder(
+      shrinkWrap: true,
+      physics: const NeverScrollableScrollPhysics(),
+      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: 3,
+        crossAxisSpacing: 10,
+        mainAxisSpacing: 10,
+        childAspectRatio: 1.1,
       ),
-    );
-  }
-}
-
-// ─── STATS ROW ────────────────────────────────────────────────────────────────
-
-class _StatsRow extends StatelessWidget {
-  const _StatsRow();
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      children: [
-        Expanded(
-          child: _StatCard<List<UserModel>>(
-            label:   'Clients',
-            icon:    Icons.person_rounded,
-            color:   AppColors.purple,
-            stream:  AuthService.watchUsersByRole('client'),
-            count:   (l) => l.length,
-          ),
-        ),
-        const SizedBox(width: 10),
-        Expanded(
-          child: _StatCard<List<BusinessModel>>(
-            label:   'Entreprises',
-            icon:    Icons.store_rounded,
-            color:   AppColors.blue,
-            stream:  BusinessService.watchAll(),
-            count:   (l) => l.length,
-          ),
-        ),
-        const SizedBox(width: 10),
-        Expanded(
-          child: _StatCard<List<PromoModel>>(
-            label:   'Promos',
-            icon:    Icons.local_offer_rounded,
-            color:   AppColors.pink,
-            stream:  PromoService.watchByStatus('approved'),
-            count:   (l) => l.length,
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-class _StatCard<T> extends StatelessWidget {
-  final String    label;
-  final IconData  icon;
-  final Color     color;
-  final Stream<T> stream;
-  final int Function(T) count;
-
-  const _StatCard({
-    required this.label,
-    required this.icon,
-    required this.color,
-    required this.stream,
-    required this.count,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return StreamBuilder<T>(
-      stream: stream,
-      builder: (context, snap) {
-        final n = snap.hasData ? count(snap.data as T) : 0;
-        return Container(
-          padding: const EdgeInsets.all(14),
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(16),
-            border: Border.all(color: color.withValues(alpha: 0.2)),
-            boxShadow: [
-              BoxShadow(
-                color: color.withValues(alpha: 0.08),
-                blurRadius: 12,
-                offset: const Offset(0, 4),
-              ),
-            ],
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Container(
-                width: 32,
-                height: 32,
-                decoration: BoxDecoration(
-                  color: color.withValues(alpha: 0.12),
-                  borderRadius: BorderRadius.circular(10),
+      itemCount: _actions.length,
+      itemBuilder: (context, i) {
+        final a = _actions[i];
+        return GestureDetector(
+          onTap: () => onNavigate(a.navIndex),
+          child: Container(
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: AppColors.border),
+            ),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Container(
+                  width: 40,
+                  height: 40,
+                  decoration: BoxDecoration(
+                    color: a.color.withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Icon(a.icon, color: a.color, size: 20),
                 ),
-                child: Icon(icon, color: color, size: 18),
-              ),
-              const SizedBox(height: 10),
-              Text(
-                n.toString(),
-                style: TextStyle(
-                  color: color,
-                  fontSize: 26,
-                  fontWeight: FontWeight.w800,
+                const SizedBox(height: 8),
+                Text(
+                  a.label,
+                  style: const TextStyle(
+                    color: AppColors.textDark,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                  ),
+                  textAlign: TextAlign.center,
                 ),
-              ),
-              Text(
-                label,
-                style: const TextStyle(
-                    color: AppColors.textMuted, fontSize: 11),
-              ),
-            ],
+              ],
+            ),
           ),
         );
       },
@@ -288,8 +551,22 @@ class _PendingBusinessesList extends StatelessWidget {
           return const Center(
               child: CircularProgressIndicator(color: AppColors.primary));
         }
+        if (snap.hasError) {
+          return Center(
+            child: Padding(
+              padding: const EdgeInsets.all(32),
+              child: Text(
+                AppErrorHandler.getMessage(snap.error),
+                style: const TextStyle(color: AppColors.textMuted),
+                textAlign: TextAlign.center,
+              ),
+            ),
+          );
+        }
         final businesses = snap.data ?? [];
-        if (businesses.isEmpty) return _emptyState('Aucune entreprise en attente');
+        if (businesses.isEmpty) {
+          return const AppEmptyState(message: 'Aucune entreprise en attente');
+        }
         return Column(
           children: businesses.map((b) => _BusinessCard(business: b)).toList(),
         );
@@ -305,7 +582,6 @@ class _BusinessCard extends StatelessWidget {
   Future<void> _approve(BuildContext context) async {
     try {
       await BusinessService.approve(business.uid);
-      await NotificationService.notifyBusinessApproved(business.uid);
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -316,10 +592,8 @@ class _BusinessCard extends StatelessWidget {
         );
       }
     } catch (e) {
-      if (context.mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text('Erreur: $e')));
-      }
+      AppErrorHandler.log('Business.approve', e);
+      if (context.mounted) AppErrorHandler.showError(context, e);
     }
   }
 
@@ -345,12 +619,9 @@ class _BusinessCard extends StatelessWidget {
     if (confirmed != true) return;
     try {
       await BusinessService.reject(business.uid);
-      await NotificationService.notifyBusinessRejected(business.uid);
     } catch (e) {
-      if (context.mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text('Erreur: $e')));
-      }
+      AppErrorHandler.log('Business.reject', e);
+      if (context.mounted) AppErrorHandler.showError(context, e);
     }
   }
 
@@ -469,193 +740,3 @@ class _BusinessCard extends StatelessWidget {
   }
 }
 
-// ─── PENDING PROMOS ───────────────────────────────────────────────────────────
-
-class _PendingPromosList extends StatelessWidget {
-  const _PendingPromosList();
-
-  @override
-  Widget build(BuildContext context) {
-    return StreamBuilder<List<PromoModel>>(
-      stream: PromoService.watchByStatus('pending'),
-      builder: (context, snap) {
-        final promos = snap.data ?? [];
-        if (promos.isEmpty) return _emptyState('Aucune promo en attente');
-        return Column(
-          children: promos.map((p) => _AdminPromoCard(promo: p)).toList(),
-        );
-      },
-    );
-  }
-}
-
-class _AdminPromoCard extends StatelessWidget {
-  final PromoModel promo;
-  const _AdminPromoCard({required this.promo});
-
-  Future<void> _approve(BuildContext context) async {
-    try {
-      await PromoService.approve(promo.id);
-      await NotificationService.notifyPromoApproved(
-          promo.businessId, promo.title);
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Promo approuvée !'),
-            backgroundColor: AppColors.success,
-            behavior: SnackBarBehavior.floating,
-          ),
-        );
-      }
-    } catch (e) {
-      if (context.mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text('Erreur: $e')));
-      }
-    }
-  }
-
-  Future<void> _reject(BuildContext context) async {
-    try {
-      await PromoService.reject(promo.id);
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Promo rejetée'),
-            backgroundColor: AppColors.error,
-            behavior: SnackBarBehavior.floating,
-          ),
-        );
-      }
-    } catch (e) {
-      if (context.mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text('Erreur: $e')));
-      }
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      margin: const EdgeInsets.only(bottom: 12),
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: AppColors.primary.withValues(alpha: 0.2)),
-        boxShadow: [
-          BoxShadow(
-            color: AppColors.purple.withValues(alpha: 0.06),
-            blurRadius: 12,
-            offset: const Offset(0, 4),
-          ),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Expanded(
-                child: Text(
-                  promo.title,
-                  style: const TextStyle(
-                      color: AppColors.textDark,
-                      fontWeight: FontWeight.w700,
-                      fontSize: 14),
-                ),
-              ),
-              Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                decoration: BoxDecoration(
-                  gradient: AppColors.primaryGradient,
-                  borderRadius: BorderRadius.circular(20),
-                ),
-                child: Text(
-                  '-${promo.discount}%',
-                  style: const TextStyle(
-                      color: Colors.white,
-                      fontWeight: FontWeight.w700,
-                      fontSize: 12),
-                ),
-              ),
-            ],
-          ),
-          if (promo.businessName != null) ...[
-            const SizedBox(height: 4),
-            Text(promo.businessName!,
-                style: const TextStyle(
-                    color: AppColors.textMuted, fontSize: 12)),
-          ],
-          if (promo.description.isNotEmpty) ...[
-            const SizedBox(height: 4),
-            Text(
-              promo.description,
-              style: const TextStyle(
-                  color: AppColors.textLight, fontSize: 12),
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-            ),
-          ],
-          const SizedBox(height: 12),
-          Row(
-            children: [
-              Expanded(
-                child: ElevatedButton(
-                  onPressed: () => _approve(context),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: AppColors.success,
-                    foregroundColor: Colors.white,
-                    shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(10)),
-                    padding: const EdgeInsets.symmetric(vertical: 8),
-                  ),
-                  child: const Text('Approuver'),
-                ),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: OutlinedButton(
-                  onPressed: () => _reject(context),
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor: AppColors.error,
-                    side: const BorderSide(color: AppColors.error),
-                    shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(10)),
-                    padding: const EdgeInsets.symmetric(vertical: 8),
-                  ),
-                  child: const Text('Rejeter'),
-                ),
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-// ─── SHARED ───────────────────────────────────────────────────────────────────
-
-Widget _emptyState(String message) {
-  return Container(
-    padding: const EdgeInsets.all(16),
-    decoration: BoxDecoration(
-      color: AppColors.primaryLight,
-      borderRadius: BorderRadius.circular(14),
-      border: Border.all(color: AppColors.primary.withValues(alpha: 0.2)),
-    ),
-    child: Row(
-      children: [
-        const Icon(Icons.check_circle_rounded,
-            color: AppColors.success, size: 18),
-        const SizedBox(width: 10),
-        Text(message,
-            style: const TextStyle(
-                color: AppColors.textMuted, fontSize: 13)),
-      ],
-    ),
-  );
-}

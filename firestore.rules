@@ -1,0 +1,184 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ─── HELPERS ───────────────────────────────────────────────────────────
+
+    function isAuth() {
+      return request.auth != null;
+    }
+
+    function uid() {
+      return request.auth.uid;
+    }
+
+    function userDoc() {
+      return get(/databases/$(database)/documents/users/$(uid())).data;
+    }
+
+    function isAdmin() {
+      return isAuth() && userDoc().role == 'admin';
+    }
+
+    function isBusiness() {
+      return isAuth() && userDoc().role == 'entreprise';
+    }
+
+    // ─── USERS ─────────────────────────────────────────────────────────────
+
+    match /users/{userId} {
+      allow read:   if isAuth();
+      allow create: if uid() == userId;
+      allow update: if uid() == userId || isAdmin();
+      allow delete: if isAdmin();
+    }
+
+    // ─── BUSINESSES ────────────────────────────────────────────────────────
+
+    match /businesses/{bizId} {
+      allow read:   if true;
+      allow create: if isBusiness() && uid() == bizId;
+      allow update: if (isBusiness() && uid() == bizId) || isAdmin();
+      allow delete: if isAdmin();
+    }
+
+    // ─── PROMOS ────────────────────────────────────────────────────────────
+
+    match /promos/{promoId} {
+      allow read:   if true;
+      allow create: if isBusiness();
+      allow update: if isAdmin()
+                   || (isBusiness() && resource.data.businessId == uid());
+      allow delete: if isAdmin()
+                   || (isBusiness() && resource.data.businessId == uid());
+    }
+
+    // ─── FAVORITES ─────────────────────────────────────────────────────────
+
+    match /favorites/{favId} {
+      allow read:   if isAuth() && resource.data.userId == uid();
+      allow create: if isAuth() && request.resource.data.userId == uid();
+      allow delete: if isAuth() && resource.data.userId == uid();
+    }
+
+    // ─── RATINGS ───────────────────────────────────────────────────────────
+
+    match /ratings/{ratingId} {
+      allow read:  if true;
+      allow write: if isAuth();
+    }
+
+    // ─── CATEGORIES ────────────────────────────────────────────────────────
+
+    match /categories/{catId} {
+      allow read:  if true;
+      allow write: if isAdmin();
+    }
+
+    // ─── RESERVATIONS ──────────────────────────────────────────────────────
+
+    match /reservations/{resId} {
+      allow read:   if isAuth()
+                   && (resource.data.userId == uid()
+                       || resource.data.businessId == uid()
+                       || isAdmin());
+      allow create: if isAuth() && request.resource.data.userId == uid();
+      allow update: if isAuth()
+                   && (resource.data.businessId == uid() || isAdmin());
+      allow delete: if isAdmin();
+    }
+
+    // ─── CHATS ─────────────────────────────────────────────────────────────
+
+    match /chats/{chatId} {
+      allow read, write: if isAuth();
+      match /messages/{messageId} {
+        allow read, write: if isAuth();
+      }
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    //  COMMENTS
+    //  Structure :
+    //    comments/{commentId}
+    //      ├── promoId, businessId, userId, userName, comment, rating
+    //      └── reply: { companyId, companyName, text, createdAt, updatedAt? }
+    // ═══════════════════════════════════════════════════════════════════════
+
+    match /comments/{commentId} {
+      // ── Lecture : publique ─────────────────────────────────────────────
+      allow read: if true;
+
+      // ── Création : utilisateur connecté, userId = son UID,
+      //              rating entre 1 et 5, texte ≥ 10 char
+      allow create: if isAuth()
+                   && request.resource.data.userId == uid()
+                   && request.resource.data.promoId is string
+                   && request.resource.data.comment is string
+                   && request.resource.data.comment.size() >= 10
+                   && request.resource.data.rating  >= 1
+                   && request.resource.data.rating  <= 5
+                   // businessId obligatoire pour les notifications
+                   && request.resource.data.businessId is string;
+
+      // ── Modification : seul le propriétaire du commentaire
+      //                  peut modifier son texte/note (pas le reply)
+      allow update: if isAuth()
+                   && resource.data.userId == uid()
+                   // Empêche de modifier l'auteur ou la promo ciblée
+                   && request.resource.data.userId   == resource.data.userId
+                   && request.resource.data.promoId  == resource.data.promoId
+                   && request.resource.data.businessId == resource.data.businessId
+
+                   // OU : entreprise propriétaire qui gère le champ reply
+                   || (isAuth()
+                       && isBusiness()
+                       && resource.data.businessId == uid());
+
+      // ── Suppression : propriétaire du commentaire OU admin
+      allow delete: if isAuth()
+                   && (resource.data.userId == uid() || isAdmin());
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    //  NOTIFICATIONS
+    //  Collection : notifications/{notificationId}
+    //  Champs : type, targetUserId, actorName, commentId, promoId,
+    //           promoTitle, message, isRead, createdAt
+    // ═══════════════════════════════════════════════════════════════════════
+
+    match /notifications/{notifId} {
+
+      // ── Lecture ───────────────────────────────────────────────────────
+      // • Utilisateur normal : ses propres notifications (targetUserId == uid)
+      // • Admin              : toutes les notifications (y compris __admin__)
+      allow read: if isAuth()
+                 && (resource.data.targetUserId == uid() || isAdmin());
+
+      // ── Création ──────────────────────────────────────────────────────
+      // Tout utilisateur connecté peut créer une notification.
+      // Les IDs déterministes (company_*, admin_*, reply_*) garantissent
+      // l'idempotence côté service.
+      allow create: if isAuth()
+                   && request.resource.data.targetUserId is string
+                   && request.resource.data.title   is string
+                   && request.resource.data.message is string
+                   && request.resource.data.keys().hasAll([
+                        'type', 'targetUserId', 'senderId',
+                        'commentId', 'promoId', 'isRead', 'createdAt'
+                      ]);
+
+      // ── Mise à jour ───────────────────────────────────────────────────
+      // Seul le destinataire peut marquer comme lu (ou l'admin pour __admin__).
+      allow update: if isAuth()
+                   && (resource.data.targetUserId == uid()
+                       || (isAdmin() && resource.data.targetUserId == '__admin__'))
+                   && request.resource.data.diff(resource.data)
+                        .affectedKeys().hasOnly(['isRead']);
+
+      // ── Suppression ───────────────────────────────────────────────────
+      allow delete: if isAuth()
+                   && (resource.data.targetUserId == uid() || isAdmin());
+    }
+  }
+}

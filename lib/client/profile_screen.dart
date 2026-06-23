@@ -1,8 +1,16 @@
 import 'package:flutter/material.dart';
+import '../models/reservation_model.dart';
 import '../models/user_model.dart';
 import '../services/auth_service.dart';
+import '../services/notification_manager.dart';
+import '../services/reservation_service.dart';
 import '../theme/app_theme.dart';
+import '../utils/app_routes.dart';
+import '../utils/error_handler.dart';
 import '../widgets/client_navbar.dart';
+import '../widgets/notification_overlay.dart';
+import '../widgets/required_label.dart';
+import '../widgets/reservation_countdown.dart';
 
 class ProfileScreen extends StatefulWidget {
   const ProfileScreen({super.key});
@@ -12,9 +20,27 @@ class ProfileScreen extends StatefulWidget {
 }
 
 class _ProfileScreenState extends State<ProfileScreen> {
+  bool _expiryNotified  = false;
+  bool _autoExpired     = false;
+  bool _notifEnabled    = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadNotifPref();
+  }
+
+  Future<void> _loadNotifPref() async {
+    final v = await NotificationManager.isEnabled();
+    if (mounted) setState(() => _notifEnabled = v);
+  }
+
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
+    final uid = AuthService.currentUid ?? '';
+    return NotificationWrapper(
+      userId: uid,
+      child: Scaffold(
       backgroundColor: AppColors.bg,
       body: StreamBuilder<UserModel?>(
         stream: AuthService.watchCurrentUser(),
@@ -28,6 +54,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 pinned: true,
                 backgroundColor: Colors.transparent,
                 automaticallyImplyLeading: false,
+                actions: [
+                  Padding(
+                    padding: const EdgeInsets.only(right: 8, top: 4),
+                    child: NotificationBell(userId: uid),
+                  ),
+                ],
                 flexibleSpace: FlexibleSpaceBar(
                   background: Container(
                     decoration: const BoxDecoration(
@@ -131,6 +163,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
                       const SizedBox(height: 16),
 
+                      // Reservations section
+                      _reservationsSection(),
+
                       // Menu items
                       _menuItem(
                         icon: Icons.edit_outlined,
@@ -141,21 +176,15 @@ class _ProfileScreenState extends State<ProfileScreen> {
                         icon: Icons.favorite_border_rounded,
                         label: 'Mes favoris',
                         onTap: () =>
-                            Navigator.pushReplacementNamed(context, '/favorites'),
+                            Navigator.pushReplacementNamed(context, AppRoutes.favorites),
                       ),
                       _menuItem(
                         icon: Icons.chat_bubble_outline_rounded,
                         label: 'Mes conversations',
                         onTap: () =>
-                            Navigator.pushReplacementNamed(context, '/conversations'),
+                            Navigator.pushReplacementNamed(context, AppRoutes.conversations),
                       ),
-                      _menuItem(
-                        icon: Icons.qr_code_scanner_rounded,
-                        label: 'Scanner un QR code',
-                        onTap: () =>
-                            Navigator.pushNamed(context, '/qr_scanner'),
-                      ),
-
+                      _notifSettingsCard(),
                       const SizedBox(height: 24),
 
                       // Sign out
@@ -164,7 +193,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
                         onTap: () async {
                           await AuthService.signOut();
                           if (context.mounted) {
-                            Navigator.pushReplacementNamed(context, '/login');
+                            Navigator.pushNamedAndRemoveUntil(
+                                context, AppRoutes.login, (_) => false);
                           }
                         },
                         icon: Icons.logout_rounded,
@@ -183,8 +213,64 @@ class _ProfileScreenState extends State<ProfileScreen> {
         },
       ),
       bottomNavigationBar: const ClientNavbar(currentIndex: 4),
+    )); // NotificationWrapper
+  }
+
+  Widget _reservationsSection() {
+    final uid = AuthService.currentUid;
+    if (uid == null) return const SizedBox.shrink();
+
+    return StreamBuilder<List<ReservationModel>>(
+      stream: ReservationService.watchUserReservations(uid),
+      builder: (context, snap) {
+        final all    = snap.data ?? [];
+        final active = all.where((r) => r.isActive).toList();
+
+        // Mark overdue docs in Firestore once per session
+        if (!_autoExpired && snap.data != null) {
+          _autoExpired = true;
+          ReservationService.autoExpireForUser(uid);
+        }
+
+        if (active.isEmpty) return const SizedBox.shrink();
+
+        // Notify about reservations expiring within 2 hours (once per session)
+        if (!_expiryNotified) {
+          for (final r in active) {
+            final hoursLeft = r.expiresAt.difference(DateTime.now()).inHours;
+            if (hoursLeft < 2) {
+              _expiryNotified = true;
+              NotificationManager.reservationExpiringSoon(
+                  promoTitle: r.promoTitle);
+              break;
+            }
+          }
+        }
+
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Mes réservations',
+              style: TextStyle(
+                color: AppColors.textDark,
+                fontSize: 15,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            const SizedBox(height: 10),
+            ...active.map((r) => ReservationCountdownCard(
+              key: ValueKey(r.id),
+              reservation: r,
+              onExpire: () => ReservationService.expire(r.id),
+            )),
+            const SizedBox(height: 8),
+          ],
+        );
+      },
     );
   }
+
 
   Widget _infoCard(UserModel? user) {
     return Container(
@@ -300,6 +386,100 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
+  Widget _notifSettingsCard() {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 10),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: AppColors.border),
+      ),
+      child: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+            child: Row(
+              children: [
+                Container(
+                  width: 36,
+                  height: 36,
+                  decoration: BoxDecoration(
+                    color: AppColors.primaryLight,
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: const Icon(Icons.notifications_outlined,
+                      color: AppColors.primary, size: 18),
+                ),
+                const SizedBox(width: 14),
+                const Expanded(
+                  child: Text(
+                    'Notifications',
+                    style: TextStyle(
+                        color: AppColors.textDark,
+                        fontWeight: FontWeight.w600,
+                        fontSize: 14),
+                  ),
+                ),
+                Switch.adaptive(
+                  value: _notifEnabled,
+                  activeThumbColor: AppColors.primary,
+                  onChanged: (v) async {
+                    setState(() => _notifEnabled = v);
+                    await NotificationManager.setEnabled(v);
+                    if (v) await NotificationManager.requestPermission();
+                  },
+                ),
+              ],
+            ),
+          ),
+          if (_notifEnabled)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+              child: GestureDetector(
+                onTap: () async {
+                  final messenger = ScaffoldMessenger.of(context);
+                  await NotificationManager.showTestNotification();
+                  if (!context.mounted) return;
+                  messenger.showSnackBar(
+                    const SnackBar(
+                      content: Text(
+                          'Notification de test envoyée dans 5 secondes'),
+                      backgroundColor: AppColors.primary,
+                      behavior: SnackBarBehavior.floating,
+                    ),
+                  );
+                },
+                child: Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.symmetric(vertical: 10),
+                  decoration: BoxDecoration(
+                    color: AppColors.primaryLight,
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: const Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(Icons.send_rounded,
+                          color: AppColors.primary, size: 16),
+                      SizedBox(width: 8),
+                      Text(
+                        'Tester les notifications',
+                        style: TextStyle(
+                          color: AppColors.primary,
+                          fontWeight: FontWeight.w600,
+                          fontSize: 13,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
   void _showEditDialog(BuildContext context, UserModel? user) {
     final nameCtrl  = TextEditingController(text: user?.name ?? '');
     final phoneCtrl = TextEditingController(text: user?.phone ?? '');
@@ -314,12 +494,16 @@ class _ProfileScreenState extends State<ProfileScreen> {
           padding: EdgeInsets.only(
               bottom: MediaQuery.of(ctx).viewInsets.bottom),
           child: Container(
-            padding: const EdgeInsets.fromLTRB(24, 20, 24, 32),
+            constraints: BoxConstraints(
+              maxHeight: MediaQuery.sizeOf(ctx).height * 0.85,
+            ),
             decoration: const BoxDecoration(
               color: Colors.white,
               borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
             ),
-            child: Column(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.fromLTRB(24, 20, 24, 32),
+              child: Column(
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -356,6 +540,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 const SizedBox(height: 16),
 
                 // Field
+                RequiredLabel(tab == 0 ? 'Nom' : 'Téléphone'),
                 _editField(
                   tab == 0 ? nameCtrl : phoneCtrl,
                   tab == 0 ? 'Votre nom' : '+213...',
@@ -371,19 +556,27 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   onTap: () async {
                     final uid = AuthService.currentUid;
                     if (uid == null) return;
-                    if (tab == 0 && nameCtrl.text.trim().isNotEmpty) {
-                      await AuthService.updateUserName(
-                          uid, nameCtrl.text.trim());
-                    } else if (tab == 1 &&
-                        phoneCtrl.text.trim().isNotEmpty) {
-                      await AuthService.updateUserPhone(
-                          uid, phoneCtrl.text.trim());
+                    try {
+                      if (tab == 0 && nameCtrl.text.trim().isNotEmpty) {
+                        await AuthService.updateUserName(
+                            uid, nameCtrl.text.trim());
+                      } else if (tab == 1 &&
+                          phoneCtrl.text.trim().isNotEmpty) {
+                        await AuthService.updateUserPhone(
+                            uid, phoneCtrl.text.trim());
+                      }
+                      if (ctx.mounted) Navigator.pop(ctx);
+                    } catch (e) {
+                      if (ctx.mounted) {
+                        AppErrorHandler.showError(
+                            ctx, e, logContext: 'EditProfile');
+                      }
                     }
-                    if (ctx.mounted) Navigator.pop(ctx);
                   },
                 ),
               ],
-            ),
+              ), // Column
+            ), // SingleChildScrollView
           ),
         ),
       ),
@@ -447,3 +640,4 @@ class _ProfileScreenState extends State<ProfileScreen> {
         ),
       );
 }
+

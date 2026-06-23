@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../models/user_model.dart';
 import '../services/auth_service.dart';
 import '../theme/app_theme.dart';
+import '../utils/error_handler.dart';
 
 class ManageUsersScreen extends StatefulWidget {
   const ManageUsersScreen({super.key});
@@ -120,10 +121,44 @@ class _ManageUsersScreenState extends State<ManageUsersScreen> {
               }
 
               if (!snap.hasData || snap.data!.isEmpty) {
-                return const Center(
-                  child: Text('Aucun utilisateur trouvé.',
-                      style: TextStyle(
-                          color: AppColors.textMuted)),
+                return Center(
+                  child: Padding(
+                    padding: const EdgeInsets.all(32),
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Container(
+                          width: 64,
+                          height: 64,
+                          decoration: const BoxDecoration(
+                            color: AppColors.primaryLight,
+                            shape: BoxShape.circle,
+                          ),
+                          child: const Icon(
+                            Icons.people_outline_rounded,
+                            color: AppColors.primary,
+                            size: 28,
+                          ),
+                        ),
+                        const SizedBox(height: 16),
+                        const Text(
+                          'Aucun utilisateur trouvé',
+                          style: TextStyle(
+                            color: AppColors.textDark,
+                            fontWeight: FontWeight.w700,
+                            fontSize: 15,
+                          ),
+                        ),
+                        const SizedBox(height: 6),
+                        const Text(
+                          'Aucun compte ne correspond\naux critères sélectionnés.',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                              color: AppColors.textMuted, fontSize: 13),
+                        ),
+                      ],
+                    ),
+                  ),
                 );
               }
 
@@ -179,10 +214,8 @@ class _UserCard extends StatelessWidget {
     try {
       await AuthService.updateUserStatus(user.uid, newStatus);
     } catch (e) {
-      if (context.mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text('Erreur: $e')));
-      }
+      AppErrorHandler.log('User.toggleStatus', e);
+      if (context.mounted) AppErrorHandler.showError(context, e);
     }
   }
 

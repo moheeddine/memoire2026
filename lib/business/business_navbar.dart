@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../theme/app_theme.dart';
+import '../utils/responsive.dart';
 import 'dashboard_screen.dart';
 import 'add_promo_screen.dart';
 import 'manage_promos_screen.dart';
@@ -65,6 +66,8 @@ class BusinessNavbar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final iconSz = AppResponsive.navIconSz(context);
+
     return Container(
       decoration: const BoxDecoration(
         color: Colors.white,
@@ -91,39 +94,36 @@ class BusinessNavbar extends StatelessWidget {
                   child: Column(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
+                      // Icon-only pill — guaranteed to fit on any screen width
                       AnimatedContainer(
                         duration: const Duration(milliseconds: 200),
                         padding: const EdgeInsets.symmetric(
-                            horizontal: 14, vertical: 6),
+                            horizontal: 14, vertical: 5),
                         decoration: BoxDecoration(
-                          gradient: active
-                              ? AppColors.primaryGradient
-                              : null,
+                          gradient: active ? AppColors.primaryGradient : null,
                           borderRadius: BorderRadius.circular(20),
                         ),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Icon(
-                              _icons[i],
-                              color: active
-                                  ? Colors.white
-                                  : AppColors.textMuted,
-                              size: 22,
-                            ),
-                            if (active) ...[
-                              const SizedBox(width: 4),
-                              Text(
-                                _labels[i],
-                                style: const TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 11,
-                                  fontWeight: FontWeight.w600,
-                                ),
-                              ),
-                            ],
-                          ],
+                        child: Icon(
+                          _icons[i],
+                          color: active ? Colors.white : AppColors.textMuted,
+                          size: iconSz,
                         ),
+                      ),
+                      const SizedBox(height: 3),
+                      Text(
+                        _labels[i],
+                        style: TextStyle(
+                          color: active
+                              ? AppColors.primary
+                              : AppColors.textMuted,
+                          fontSize: 9.5,
+                          fontWeight: active
+                              ? FontWeight.w700
+                              : FontWeight.w500,
+                          height: 1,
+                        ),
+                        overflow: TextOverflow.ellipsis,
+                        maxLines: 1,
                       ),
                     ],
                   ),

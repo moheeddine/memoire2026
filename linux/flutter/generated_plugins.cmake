@@ -3,7 +3,9 @@
 #
 
 list(APPEND FLUTTER_PLUGIN_LIST
-  objectbox_flutter_libs
+  file_selector_linux
+  flutter_timezone
+  printing
   url_launcher_linux
 )
 

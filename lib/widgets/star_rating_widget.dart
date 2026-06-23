@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../theme/app_theme.dart';
 
 class StarRatingWidget extends StatelessWidget {
   final double rating; // 0.0 – 5.0
@@ -13,8 +14,8 @@ class StarRatingWidget extends StatelessWidget {
     required this.rating,
     this.starCount = 5,
     this.size = 20,
-    this.activeColor = const Color(0xFFFFC107),
-    this.inactiveColor = Colors.white24,
+    this.activeColor = AppColors.warning,
+    this.inactiveColor = AppColors.border,
     this.onRate,
   });
 
@@ -68,7 +69,7 @@ class RatingBadge extends StatelessWidget {
               ? '${rating.toStringAsFixed(1)} ($count)'
               : 'Pas encore noté',
           style: TextStyle(
-            color: Colors.white54,
+            color: AppColors.textLight,
             fontSize: starSize - 2,
           ),
         ),

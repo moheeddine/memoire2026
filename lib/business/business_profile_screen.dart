@@ -2,10 +2,13 @@ import 'package:flutter/material.dart';
 import '../models/business_model.dart';
 import '../services/auth_service.dart';
 import '../services/business_service.dart';
+import '../utils/app_routes.dart';
 import '../services/rating_service.dart';
 import '../theme/app_theme.dart';
+import '../utils/error_handler.dart';
 import '../widgets/star_rating_widget.dart';
 import 'business_navbar.dart';
+import '../widgets/notification_overlay.dart';
 
 class BusinessProfileScreen extends StatelessWidget {
   final String businessId;
@@ -14,54 +17,109 @@ class BusinessProfileScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final email = AuthService.currentUser?.email ?? '';
-
-    return Scaffold(
+    return NotificationWrapper(
+      userId: businessId,
+      child: Scaffold(
       backgroundColor: AppColors.bg,
-      body: FutureBuilder<BusinessModel?>(
-        future: BusinessService.getBusinessData(businessId),
+      body: StreamBuilder<BusinessModel?>(
+        stream: BusinessService.watchBusiness(businessId),
         builder: (context, snapshot) {
-          if (!snapshot.hasData) {
+          if (snapshot.connectionState == ConnectionState.waiting) {
             return const Center(
-                child: CircularProgressIndicator(
-                    color: AppColors.primary));
+                child: CircularProgressIndicator(color: AppColors.primary));
+          }
+
+          if (snapshot.hasError) {
+            return Center(
+              child: Padding(
+                padding: const EdgeInsets.all(32),
+                child: Text(
+                  AppErrorHandler.getMessage(snapshot.error),
+                  style: const TextStyle(color: AppColors.textMuted),
+                  textAlign: TextAlign.center,
+                ),
+              ),
+            );
           }
 
           final business = snapshot.data;
+          if (business == null) {
+            return Center(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(Icons.store_mall_directory_outlined,
+                      color: AppColors.textLight, size: 48),
+                  const SizedBox(height: 12),
+                  const Text('Entreprise introuvable',
+                      style: TextStyle(color: AppColors.textMuted)),
+                  const SizedBox(height: 16),
+                  TextButton(
+                    onPressed: () async {
+                      await AuthService.signOut();
+                      if (context.mounted) {
+                        Navigator.pushNamedAndRemoveUntil(
+                            context, AppRoutes.login, (_) => false);
+                      }
+                    },
+                    child: const Text('Se déconnecter'),
+                  ),
+                ],
+              ),
+            );
+          }
 
           return CustomScrollView(
             slivers: [
               // ─── Header ────────────────────────────────────────────────
               SliverAppBar(
-                expandedHeight: 200,
+                expandedHeight: 220,
                 pinned: true,
                 backgroundColor: Colors.transparent,
                 automaticallyImplyLeading: false,
+                actions: [
+                  Padding(
+                    padding: const EdgeInsets.only(right: 8, top: 4),
+                    child: NotificationBell(userId: businessId),
+                  ),
+                ],
                 flexibleSpace: FlexibleSpaceBar(
                   background: Container(
                     decoration: const BoxDecoration(
-                      gradient: AppColors.mainGradient,
-                    ),
+                        gradient: AppColors.mainGradient),
                     child: SafeArea(
                       child: Column(
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
                           const SizedBox(height: 16),
+                          // Avatar — matricule image if available, else icon
                           Container(
-                            width: 80,
-                            height: 80,
+                            width: 88,
+                            height: 88,
                             decoration: BoxDecoration(
-                              gradient: AppColors.primaryGradient,
                               shape: BoxShape.circle,
-                              border:
-                                  Border.all(color: Colors.white, width: 3),
+                              border: Border.all(
+                                  color: Colors.white, width: 3),
+                              color: Colors.white
+                                  .withValues(alpha: 0.15),
                             ),
-                            child: const Icon(Icons.store_rounded,
-                                color: Colors.white, size: 38),
+                            child: ClipOval(
+                              child: business.matriculeImageUrl != null &&
+                                      business.matriculeImageUrl!.isNotEmpty
+                                  ? Image.network(
+                                      business.matriculeImageUrl!,
+                                      fit: BoxFit.cover,
+                                      errorBuilder: (_, __, ___) =>
+                                          const Icon(Icons.store_rounded,
+                                              color: Colors.white, size: 42),
+                                    )
+                                  : const Icon(Icons.store_rounded,
+                                      color: Colors.white, size: 42),
+                            ),
                           ),
-                          const SizedBox(height: 10),
+                          const SizedBox(height: 12),
                           Text(
-                            business?.name ?? 'Mon Entreprise',
+                            business.name,
                             style: const TextStyle(
                               color: Colors.white,
                               fontSize: 20,
@@ -70,10 +128,9 @@ class BusinessProfileScreen extends StatelessWidget {
                           ),
                           const SizedBox(height: 4),
                           Text(
-                            business?.category ?? '',
+                            business.category,
                             style: TextStyle(
-                              color:
-                                  Colors.white.withValues(alpha: 0.8),
+                              color: Colors.white.withValues(alpha: 0.8),
                               fontSize: 13,
                             ),
                           ),
@@ -90,7 +147,7 @@ class BusinessProfileScreen extends StatelessWidget {
                   padding: const EdgeInsets.all(20),
                   child: Column(
                     children: [
-                      // Rating
+                      // Rating card
                       FutureBuilder<double>(
                         future: RatingService.getAverageRating(businessId),
                         builder: (context, snap) {
@@ -140,40 +197,103 @@ class BusinessProfileScreen extends StatelessWidget {
                       const SizedBox(height: 16),
 
                       // Info tiles
-                      _infoTile(
-                          Icons.mail_outline_rounded, 'Email', email),
+                      _infoTile(Icons.business_outlined, 'Nom',
+                          business.name),
+                      _infoTile(Icons.person_outline_rounded, 'Responsable',
+                          business.ownerName.isNotEmpty
+                              ? business.ownerName
+                              : '—'),
+                      _infoTile(Icons.mail_outline_rounded, 'Email',
+                          business.email.isNotEmpty ? business.email : '—'),
                       _infoTile(Icons.category_outlined, 'Catégorie',
-                          business?.category ?? '—'),
-                      _infoTile(Icons.person_outline_rounded,
-                          'Responsable', business?.ownerName ?? '—'),
+                          business.category.isNotEmpty
+                              ? business.category
+                              : '—'),
                       _infoTile(
                           Icons.badge_outlined,
                           'Matricule',
-                          business?.matricule.isNotEmpty == true
-                              ? business!.matricule
+                          business.matricule.isNotEmpty
+                              ? business.matricule
                               : '—'),
+
+                      // Matricule document image
+                      if (business.matriculeImageUrl != null &&
+                          business.matriculeImageUrl!.isNotEmpty) ...[
+                        const SizedBox(height: 6),
+                        Container(
+                          width: double.infinity,
+                          decoration: BoxDecoration(
+                            color: Colors.white,
+                            borderRadius: BorderRadius.circular(14),
+                            border: Border.all(color: AppColors.border),
+                          ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const Padding(
+                                padding: EdgeInsets.fromLTRB(16, 14, 16, 8),
+                                child: Row(
+                                  children: [
+                                    Icon(Icons.image_outlined,
+                                        color: AppColors.primary, size: 18),
+                                    SizedBox(width: 8),
+                                    Text(
+                                      'Document matricule',
+                                      style: TextStyle(
+                                          color: AppColors.textLight,
+                                          fontSize: 11),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              ClipRRect(
+                                borderRadius: const BorderRadius.vertical(
+                                    bottom: Radius.circular(13)),
+                                child: Image.network(
+                                  business.matriculeImageUrl!,
+                                  width: double.infinity,
+                                  height: 180,
+                                  fit: BoxFit.cover,
+                                  errorBuilder: (_, __, ___) => Container(
+                                    height: 80,
+                                    color: AppColors.bg,
+                                    child: const Center(
+                                      child: Icon(Icons.broken_image_outlined,
+                                          color: AppColors.textLight),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
 
                       const SizedBox(height: 24),
 
                       // Sign out
-                      GradientButton(
-                        label: 'Se déconnecter',
-                        icon: Icons.logout_rounded,
-                        onTap: () async {
-                          await AuthService.signOut();
-                          if (context.mounted) {
-                            Navigator.pushNamedAndRemoveUntil(
-                              context,
-                              '/login',
-                              (route) => false,
-                            );
-                          }
-                        },
-                        gradient: const LinearGradient(
-                          colors: [
-                            Color(0xFFEF4444),
-                            Color(0xFFDC2626)
-                          ],
+                      SizedBox(
+                        width: double.infinity,
+                        child: ElevatedButton.icon(
+                          onPressed: () async {
+                            await AuthService.signOut();
+                            if (context.mounted) {
+                              Navigator.pushNamedAndRemoveUntil(
+                                context,
+                                AppRoutes.login,
+                                (_) => false,
+                              );
+                            }
+                          },
+                          icon: const Icon(Icons.logout_rounded, size: 18),
+                          label: const Text('Se déconnecter'),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: AppColors.error,
+                            foregroundColor: Colors.white,
+                            padding: const EdgeInsets.symmetric(vertical: 14),
+                            shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(14)),
+                          ),
                         ),
                       ),
 
@@ -190,7 +310,7 @@ class BusinessProfileScreen extends StatelessWidget {
         currentIndex: 4,
         businessId: businessId,
       ),
-    );
+    )); // NotificationWrapper
   }
 
   Widget _infoTile(IconData icon, String label, String value) {

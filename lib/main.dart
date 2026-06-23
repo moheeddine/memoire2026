@@ -2,11 +2,13 @@ import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/foundation.dart';
-import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 
 import 'firebase_options.dart';
 import 'theme/app_theme.dart';
 import 'services/auth_service.dart';
+import 'services/fcm_service.dart';
+import 'services/notification_manager.dart';
+import 'utils/app_routes.dart';
 import 'business/dashboard_screen.dart';
 import 'auth/splash_screen.dart';
 import 'auth/onboarding_screen.dart';
@@ -17,93 +19,95 @@ import 'client/favorites_screen.dart';
 import 'client/profile_screen.dart';
 import 'client/chatbot_screen.dart';
 import 'client/conversations_screen.dart';
+import 'client/client_notifications_screen.dart';
 import 'admin/admin_dashboard.dart';
+import 'business/waiting_approval_screen.dart';
 
-final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin =
-    FlutterLocalNotificationsPlugin();
+// ─── BACKGROUND FCM HANDLER ───────────────────────────────────────────────────
+// Must be top-level (not inside a class) for Flutter to register it with the
+// platform background isolate.
 
 @pragma('vm:entry-point')
-Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
-  await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
-}
+Future<void> _backgroundMessageHandler(RemoteMessage message) =>
+    firebaseMessagingBackgroundHandler(message);
+
+// ─── ENTRY POINT ─────────────────────────────────────────────────────────────
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  // 1 — Firebase core (required before everything else).
   await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
 
+  // 2 — Register the background FCM handler as early as possible.
   if (!kIsWeb) {
-    FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
+    FirebaseMessaging.onBackgroundMessage(_backgroundMessageHandler);
+  }
+
+  // 3 — Local notification plugin (schedule / alert).
+  if (!kIsWeb) {
     try {
-      await _initNotifications();
+      await NotificationManager.init();
+      await NotificationManager.requestPermission();
     } catch (e) {
-      debugPrint('Notification init error: $e');
+      if (kDebugMode) debugPrint('LocalNotification init error: $e');
+    }
+
+    // 4 — FCM permission + handler setup.
+    try {
+      await FcmService.initialize();
+    } catch (e) {
+      if (kDebugMode) debugPrint('FCM init error: $e');
     }
   }
 
   runApp(const MyApp());
 }
 
-Future<void> _initNotifications() async {
-  if (kIsWeb) return;
+// ─── APP ──────────────────────────────────────────────────────────────────────
 
-  final messaging = FirebaseMessaging.instance;
-  await messaging.requestPermission(alert: true, badge: true, sound: true);
-
-  const AndroidInitializationSettings androidSettings =
-      AndroidInitializationSettings('@mipmap/ic_launcher');
-  const InitializationSettings initSettings =
-      InitializationSettings(android: androidSettings);
-  await flutterLocalNotificationsPlugin.initialize(initSettings);
-
-  messaging.onTokenRefresh.listen(_saveFcmToken);
-  final token = await messaging.getToken();
-  if (token != null) await _saveFcmToken(token);
-
-  FirebaseMessaging.onMessage.listen((RemoteMessage message) async {
-    final notification = message.notification;
-    if (notification == null) return;
-    await flutterLocalNotificationsPlugin.show(
-      message.hashCode,
-      notification.title,
-      notification.body,
-      const NotificationDetails(
-        android: AndroidNotificationDetails(
-          'cityone_channel',
-          'CityOne Notifications',
-          importance: Importance.max,
-          priority: Priority.high,
-        ),
-      ),
-    );
-  });
-}
-
-Future<void> _saveFcmToken(String token) async {
-  await AuthService.saveFcmToken(token);
-}
-
-class MyApp extends StatelessWidget {
+class MyApp extends StatefulWidget {
   const MyApp({super.key});
+
+  @override
+  State<MyApp> createState() => _MyAppState();
+}
+
+class _MyAppState extends State<MyApp> {
+  @override
+  void initState() {
+    super.initState();
+    // Watch auth state: save FCM token whenever the user signs in.
+    AuthService.authState.listen((user) {
+      if (user != null && !kIsWeb) {
+        FcmService.saveTokenForCurrentUser();
+      }
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'CityOne',
+      title:                  'PromoCity',
       debugShowCheckedModeBanner: false,
-      theme: AppTheme.theme,
-      home: const SplashScreen(),
+      theme:                  AppTheme.theme,
+      // Navigator key lets FcmService navigate without a BuildContext.
+      navigatorKey:           FcmNavigatorKey.key,
+      home:                   const SplashScreen(),
       routes: {
-        '/onboarding':         (context) => OnboardingScreen(),
-        '/login':              (context) => const LoginScreen(),
-        '/register':           (context) => RegisterScreen(),
-        '/home':               (context) => HomeScreen(),
-        '/favorites':          (context) => const FavoritesScreen(),
-        '/profile':            (context) => const ProfileScreen(),
-        '/chatbot':            (context) => const ChatbotScreen(),
-        '/conversations':      (context) => const ConversationsScreen(),
-        '/business_dashboard': (context) =>
+        AppRoutes.onboarding:        (context) => const OnboardingScreen(),
+        AppRoutes.login:             (context) => const LoginScreen(),
+        AppRoutes.register:          (context) => const RegisterScreen(),
+        AppRoutes.home:              (context) => const HomeScreen(),
+        AppRoutes.favorites:         (context) => const FavoritesScreen(),
+        AppRoutes.profile:           (context) => const ProfileScreen(),
+        AppRoutes.chatbot:           (context) => const ChatbotScreen(),
+        AppRoutes.conversations:     (context) => const ConversationsScreen(),
+        AppRoutes.businessDashboard: (context) =>
             DashboardScreen(businessId: AuthService.currentUid ?? ''),
-        '/admin_dashboard':    (context) => const AdminDashboard(),
+        AppRoutes.adminDashboard:    (context) => const AdminDashboard(),
+        AppRoutes.waiting:               (context) => const WaitingApprovalScreen(),
+        AppRoutes.clientNotifications:   (context) => const ClientNotificationsScreen(),
       },
     );
   }

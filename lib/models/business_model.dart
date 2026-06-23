@@ -76,6 +76,9 @@ class BusinessModel {
   final BusinessStats stats;
   final WeeklyViews weeklyViews;
   final DateTime? createdAt;
+  final String? matriculeImageUrl;
+  final double averageRating;
+  final int ratingCount;
 
   const BusinessModel({
     required this.uid,
@@ -90,6 +93,9 @@ class BusinessModel {
     this.stats = const BusinessStats(),
     this.weeklyViews = const WeeklyViews(),
     this.createdAt,
+    this.matriculeImageUrl,
+    this.averageRating = 0.0,
+    this.ratingCount = 0,
   });
 
   // ─── FACTORY ─────────────────────────────────────────────────────────────
@@ -109,7 +115,10 @@ class BusinessModel {
                     map['stats'] as Map<String, dynamic>?),
       weeklyViews: WeeklyViews.fromMap(
                     map['weekly_views'] as Map<String, dynamic>?),
-      createdAt:  (map['createdAt'] as Timestamp?)?.toDate(),
+      createdAt:         (map['createdAt'] as Timestamp?)?.toDate(),
+      matriculeImageUrl: map['matriculeImageUrl'] as String?,
+      averageRating:     (map['averageRating'] as num?)?.toDouble() ?? 0.0,
+      ratingCount:       (map['ratingCount'] as num?)?.toInt() ?? 0,
     );
   }
 

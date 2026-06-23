@@ -5,6 +5,7 @@ import '../services/chat_service.dart';
 import '../theme/app_theme.dart';
 import '../client/chat_screen.dart';
 import 'business_navbar.dart';
+import '../widgets/notification_overlay.dart';
 
 class BusinessChatsScreen extends StatelessWidget {
   final String businessId;
@@ -13,7 +14,9 @@ class BusinessChatsScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
+    return NotificationWrapper(
+      userId: businessId,
+      child: Scaffold(
       backgroundColor: AppColors.bg,
       appBar: AppBar(
         backgroundColor: Colors.white,
@@ -27,6 +30,13 @@ class BusinessChatsScreen extends StatelessWidget {
             fontSize: 18,
           ),
         ),
+        actions: [
+          Padding(
+            padding: const EdgeInsets.only(right: 8),
+            child: NotificationBell(
+                userId: businessId, iconColor: AppColors.textDark),
+          ),
+        ],
         bottom: PreferredSize(
           preferredSize: const Size.fromHeight(1),
           child: Container(height: 1, color: AppColors.border),
@@ -40,6 +50,18 @@ class BusinessChatsScreen extends StatelessWidget {
               child: CircularProgressIndicator(color: AppColors.primary),
             );
           }
+          if (snap.hasError) {
+            return Center(
+              child: Padding(
+                padding: const EdgeInsets.all(32),
+                child: Text(
+                  snap.error.toString(),
+                  style: const TextStyle(color: AppColors.textMuted),
+                  textAlign: TextAlign.center,
+                ),
+              ),
+            );
+          }
 
           if (!snap.hasData || snap.data!.isEmpty) {
             return Center(
@@ -49,7 +71,7 @@ class BusinessChatsScreen extends StatelessWidget {
                   Container(
                     width: 72,
                     height: 72,
-                    decoration: BoxDecoration(
+                    decoration: const BoxDecoration(
                       color: AppColors.primaryLight,
                       shape: BoxShape.circle,
                     ),
@@ -89,7 +111,7 @@ class BusinessChatsScreen extends StatelessWidget {
         currentIndex: 3,
         businessId: businessId,
       ),
-    );
+    )); // NotificationWrapper
   }
 }
 

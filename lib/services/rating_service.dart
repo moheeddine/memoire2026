@@ -42,7 +42,7 @@ class RatingService {
         .map((snap) {
       if (snap.docs.isEmpty) return 0.0;
       final total = snap.docs.fold<double>(
-          0, (sum, d) => sum + ((d.data()['score'] as num?)?.toDouble() ?? 0));
+          0, (acc, d) => acc + ((d.data()['score'] as num?)?.toDouble() ?? 0));
       return total / snap.docs.length;
     });
   }
@@ -53,7 +53,7 @@ class RatingService {
           await _col.where('businessId', isEqualTo: businessId).get();
       if (snap.docs.isEmpty) return 0.0;
       final total = snap.docs.fold<double>(
-          0, (sum, d) => sum + ((d.data()['score'] as num?)?.toDouble() ?? 0));
+          0, (acc, d) => acc + ((d.data()['score'] as num?)?.toDouble() ?? 0));
       return total / snap.docs.length;
     } catch (_) {
       return 0.0;

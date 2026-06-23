@@ -196,7 +196,7 @@ class ChatbotService {
       if (withPos.isEmpty) {
         return '📍 Activez votre localisation pour voir les promos proches.\n\n'
             'En attendant, voici quelques offres disponibles :\n'
-            + _buildPromoLines(promos.take(3).toList());
+            '${_buildPromoLines(promos.take(3).toList())}';
       }
 
       return _formatPromoList(withPos, header: '📍 Promos à proximité');

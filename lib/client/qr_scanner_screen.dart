@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
+import '../models/promo_model.dart';
 import '../services/auth_service.dart';
 import '../services/promo_service.dart';
 import '../theme/app_theme.dart';
+import 'promo_detail_screen.dart';
 
 class QrScannerScreen extends StatefulWidget {
   const QrScannerScreen({super.key});
@@ -47,12 +49,9 @@ class _QrScannerScreenState extends State<QrScannerScreen> {
 
     _showResult(
       success: result.isSuccess,
-      title: result.isSuccess
-          ? 'Promotion utilisée !'
-          : _statusTitle(result.status),
+      title:   result.isSuccess ? 'Promotion utilisée !' : _statusTitle(result.status),
       message: result.message,
-      promoTitle: result.promo?.title,
-      discount: result.promo?.discount,
+      promo:   result.promo,
     );
   }
 
@@ -66,11 +65,10 @@ class _QrScannerScreenState extends State<QrScannerScreen> {
   }
 
   void _showResult({
-    required bool success,
-    required String title,
-    required String message,
-    String? promoTitle,
-    int? discount,
+    required bool    success,
+    required String  title,
+    required String  message,
+    PromoModel?      promo,
   }) {
     setState(() => _done = true);
 
@@ -81,22 +79,33 @@ class _QrScannerScreenState extends State<QrScannerScreen> {
         borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
       ),
       builder: (_) => _ResultSheet(
-        success:    success,
-        title:      title,
-        message:    message,
-        promoTitle: promoTitle,
-        discount:   discount,
-        onDone:     () => Navigator.pop(context),
+        success: success,
+        title:   title,
+        message: message,
+        promo:   promo,
+        onDone:  () => Navigator.pop(context),
         onRetry: success
             ? null
             : () {
-                Navigator.pop(context); // close sheet
+                Navigator.pop(context);
                 setState(() {
                   _done       = false;
                   _processing = false;
                 });
                 _controller.start();
               },
+        onViewPromo: (success && promo != null)
+            ? () {
+                // pop sheet → pop scanner screen → push promo detail
+                Navigator.of(context).pop();
+                Navigator.of(context).pop();
+                Navigator.of(context).push(
+                  MaterialPageRoute(
+                    builder: (_) => PromoDetailScreen(promo: promo),
+                  ),
+                );
+              }
+            : null,
       ),
     );
   }
@@ -338,22 +347,22 @@ class _CornerPainter extends CustomPainter {
 // ─── RESULT BOTTOM SHEET ──────────────────────────────────────────────────────
 
 class _ResultSheet extends StatelessWidget {
-  final bool success;
-  final String title;
-  final String message;
-  final String? promoTitle;
-  final int? discount;
+  final bool         success;
+  final String       title;
+  final String       message;
+  final PromoModel?  promo;
   final VoidCallback onDone;
   final VoidCallback? onRetry;
+  final VoidCallback? onViewPromo;
 
   const _ResultSheet({
     required this.success,
     required this.title,
     required this.message,
     required this.onDone,
-    this.promoTitle,
-    this.discount,
+    this.promo,
     this.onRetry,
+    this.onViewPromo,
   });
 
   @override
@@ -419,14 +428,16 @@ class _ResultSheet extends StatelessWidget {
             ),
           ),
 
-          // Promo info
-          if (success && promoTitle != null) ...[
+          // Promo info card
+          if (success && promo != null) ...[
             const SizedBox(height: 20),
             Container(
               padding: const EdgeInsets.all(16),
               decoration: BoxDecoration(
                 color: AppColors.primaryLight,
                 borderRadius: BorderRadius.circular(16),
+                border: Border.all(
+                    color: AppColors.primary.withValues(alpha: 0.2)),
               ),
               child: Row(
                 children: [
@@ -438,7 +449,7 @@ class _ResultSheet extends StatelessWidget {
                       borderRadius: BorderRadius.circular(10),
                     ),
                     child: Text(
-                      '-$discount%',
+                      '-${promo!.discount}%',
                       style: const TextStyle(
                         color: Colors.white,
                         fontWeight: FontWeight.w800,
@@ -448,13 +459,26 @@ class _ResultSheet extends StatelessWidget {
                   ),
                   const SizedBox(width: 12),
                   Expanded(
-                    child: Text(
-                      promoTitle!,
-                      style: const TextStyle(
-                        color: AppColors.textDark,
-                        fontWeight: FontWeight.w600,
-                        fontSize: 15,
-                      ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          promo!.title,
+                          style: const TextStyle(
+                            color: AppColors.textDark,
+                            fontWeight: FontWeight.w700,
+                            fontSize: 14,
+                          ),
+                        ),
+                        if (promo!.businessName != null)
+                          Text(
+                            promo!.businessName!,
+                            style: const TextStyle(
+                              color: AppColors.textMuted,
+                              fontSize: 12,
+                            ),
+                          ),
+                      ],
                     ),
                   ),
                 ],
@@ -465,6 +489,15 @@ class _ResultSheet extends StatelessWidget {
           const SizedBox(height: 24),
 
           // Actions
+          if (onViewPromo != null) ...[
+            GradientButton(
+              label: 'Voir la promotion',
+              onTap: onViewPromo!,
+              icon: Icons.local_offer_rounded,
+            ),
+            const SizedBox(height: 10),
+          ],
+
           if (onRetry != null) ...[
             OutlinedButton(
               onPressed: onRetry,
@@ -476,16 +509,28 @@ class _ResultSheet extends StatelessWidget {
               ),
               child: const Text(
                 'Réessayer',
-                style: TextStyle(color: AppColors.primary, fontWeight: FontWeight.w600),
+                style: TextStyle(
+                    color: AppColors.primary,
+                    fontWeight: FontWeight.w600),
               ),
             ),
             const SizedBox(height: 10),
           ],
 
-          GradientButton(
-            label: 'Fermer',
-            onTap: onDone,
-            icon: Icons.check,
+          OutlinedButton(
+            onPressed: onDone,
+            style: OutlinedButton.styleFrom(
+              minimumSize: const Size(double.infinity, 50),
+              side: const BorderSide(color: AppColors.border),
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(14)),
+            ),
+            child: const Text(
+              'Fermer',
+              style: TextStyle(
+                  color: AppColors.textMuted,
+                  fontWeight: FontWeight.w600),
+            ),
           ),
         ],
       ),

@@ -1,6 +1,7 @@
 {
   "project_info": {
     "project_number": "717678124764",
+    "firebase_url": "https://memoire2026-467c9-default-rtdb.firebaseio.com",
     "project_id": "memoire2026-467c9",
     "storage_bucket": "memoire2026-467c9.firebasestorage.app"
   },
@@ -13,6 +14,14 @@
         }
       },
       "oauth_client": [
+        {
+          "client_id": "717678124764-ebv7rdabicdj4lfq4ll37j5vsk1bkn93.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.example.memoire2026",
+            "certificate_hash": "c4cefd93aba3d4cdb751557fd42ce3cc329e3545"
+          }
+        },
         {
           "client_id": "717678124764-out08mvdjrfu2fqcde6akpc7b7g9dbt0.apps.googleusercontent.com",
           "client_type": 3

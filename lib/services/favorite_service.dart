@@ -1,5 +1,6 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../models/favorite_model.dart';
+import '../utils/list_extensions.dart';
 
 class FavoriteService {
   static final _db = FirebaseFirestore.instance;
@@ -14,14 +15,7 @@ class FavoriteService {
         .map((snap) {
           final list =
               snap.docs.map(FavoriteModel.fromDocument).toList();
-          list.sort((a, b) {
-            final ta = a.createdAt;
-            final tb = b.createdAt;
-            if (ta == null && tb == null) return 0;
-            if (ta == null) return 1;
-            if (tb == null) return -1;
-            return tb.compareTo(ta);
-          });
+          list.sortByDate((f) => f.createdAt);
           return list;
         });
   }

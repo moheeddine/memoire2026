@@ -5,6 +5,7 @@ import '../services/auth_service.dart';
 import '../services/chat_service.dart';
 import '../theme/app_theme.dart';
 import '../widgets/client_navbar.dart';
+import '../widgets/notification_overlay.dart';
 import 'chat_screen.dart';
 
 class ConversationsScreen extends StatelessWidget {
@@ -14,7 +15,9 @@ class ConversationsScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     final uid = AuthService.currentUid ?? '';
 
-    return Scaffold(
+    return NotificationWrapper(
+      userId: uid,
+      child: Scaffold(
       backgroundColor: AppColors.bg,
       appBar: AppBar(
         backgroundColor: Colors.white,
@@ -28,6 +31,12 @@ class ConversationsScreen extends StatelessWidget {
             fontSize: 18,
           ),
         ),
+        actions: [
+          Padding(
+            padding: const EdgeInsets.only(right: 8),
+            child: NotificationBell(userId: uid, iconColor: AppColors.textDark),
+          ),
+        ],
         bottom: PreferredSize(
           preferredSize: const Size.fromHeight(1),
           child: Container(height: 1, color: AppColors.border),
@@ -41,6 +50,18 @@ class ConversationsScreen extends StatelessWidget {
               child: CircularProgressIndicator(color: AppColors.primary),
             );
           }
+          if (snap.hasError) {
+            return Center(
+              child: Padding(
+                padding: const EdgeInsets.all(32),
+                child: Text(
+                  snap.error.toString(),
+                  style: const TextStyle(color: AppColors.textMuted),
+                  textAlign: TextAlign.center,
+                ),
+              ),
+            );
+          }
 
           if (!snap.hasData || snap.data!.isEmpty) {
             return Center(
@@ -50,7 +71,7 @@ class ConversationsScreen extends StatelessWidget {
                   Container(
                     width: 72,
                     height: 72,
-                    decoration: BoxDecoration(
+                    decoration: const BoxDecoration(
                       color: AppColors.primaryLight,
                       shape: BoxShape.circle,
                     ),
@@ -84,7 +105,7 @@ class ConversationsScreen extends StatelessWidget {
         },
       ),
       bottomNavigationBar: const ClientNavbar(currentIndex: 3),
-    );
+    )); // NotificationWrapper
   }
 }
 

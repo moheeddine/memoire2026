@@ -1,11 +1,11 @@
 {
-    "name": "memoire2026",
-    "short_name": "memoire2026",
+    "name": "PromoCity",
+    "short_name": "PromoCity",
     "start_url": ".",
     "display": "standalone",
-    "background_color": "#0175C2",
-    "theme_color": "#0175C2",
-    "description": "A new Flutter project.",
+    "background_color": "#8B5CF6",
+    "theme_color": "#8B5CF6",
+    "description": "PromoCity — Découvrez les meilleures promos près de vous.",
     "orientation": "portrait-primary",
     "prefer_related_applications": false,
     "icons": [

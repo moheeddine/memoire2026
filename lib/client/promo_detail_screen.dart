@@ -8,24 +8,39 @@ import '../services/favorite_service.dart';
 import '../services/promo_service.dart';
 import '../services/rating_service.dart';
 import '../theme/app_theme.dart';
+import '../utils/error_handler.dart';
+import '../widgets/promo_image_gallery.dart';
+import '../widgets/required_label.dart';
 import '../widgets/star_rating_widget.dart';
+import '../services/notification_manager.dart';
+import '../services/reservation_service.dart';
+import '../utils/validators.dart';
+import '../utils/promo_expiration_checker.dart';
+import '../widgets/comment_section.dart';
 import 'chat_screen.dart';
-import 'payment_screen.dart';
 import 'qr_scanner_screen.dart';
 
 class PromoDetailScreen extends StatefulWidget {
   final PromoModel promo;
 
-  const PromoDetailScreen({super.key, required this.promo});
+  /// Si renseigné, la section commentaires scrolle et surligne ce commentaire.
+  final String? scrollToCommentId;
+
+  const PromoDetailScreen({
+    super.key,
+    required this.promo,
+    this.scrollToCommentId,
+  });
 
   @override
   State<PromoDetailScreen> createState() => _PromoDetailScreenState();
 }
 
 class _PromoDetailScreenState extends State<PromoDetailScreen> {
-  bool _isFav   = false;
-  double _rating = 0.0;
-  bool _codeCopied = false;
+  bool _isFav                  = false;
+  double _rating               = 0.0;
+  bool _codeCopied             = false;
+  bool _hasActiveReservation   = false;
 
   @override
   void initState() {
@@ -41,12 +56,16 @@ class _PromoDetailScreenState extends State<PromoDetailScreen> {
       PromoService.incrementView(widget.promo.id);
     }
 
-    final fav    = await FavoriteService.isFavoritePromo(uid, widget.promo.id);
-    final rating = await RatingService.getUserRating(uid, widget.promo.businessId);
+    final results = await Future.wait([
+      FavoriteService.isFavoritePromo(uid, widget.promo.id),
+      RatingService.getUserRating(uid, widget.promo.businessId),
+      ReservationService.hasActiveReservation(uid, widget.promo.id),
+    ]);
     if (mounted) {
       setState(() {
-        _isFav  = fav;
-        _rating = rating ?? 0.0;
+        _isFav                = results[0] as bool;
+        _rating               = (results[1] as double?) ?? 0.0;
+        _hasActiveReservation = (results[2] as bool) || !widget.promo.isEffectivelyActive;
       });
     }
   }
@@ -95,11 +114,17 @@ class _PromoDetailScreenState extends State<PromoDetailScreen> {
 
     return Scaffold(
       backgroundColor: AppColors.bg,
+      // ── Sticky reservation CTA ─────────────────────────────────────────────
+      bottomNavigationBar: _StickyReservationBar(
+        promo: promo,
+        hasActiveReservation: _hasActiveReservation,
+        onReserve: () => _showReservationModal(promo),
+      ),
       body: CustomScrollView(
         slivers: [
           // ─── Hero header ─────────────────────────────────────────────────
           SliverAppBar(
-            expandedHeight: 240,
+            expandedHeight: promo.imageUrls.isNotEmpty ? 300.0 : 240.0,
             pinned: true,
             backgroundColor: Colors.transparent,
             leading: GestureDetector(
@@ -134,64 +159,99 @@ class _PromoDetailScreenState extends State<PromoDetailScreen> {
               ),
             ],
             flexibleSpace: FlexibleSpaceBar(
-              background: Container(
-                decoration: const BoxDecoration(
-                  gradient: AppColors.mainGradient,
-                ),
-                child: Stack(
-                  children: [
-                    // Decorative circles
-                    Positioned(
-                      top: -40,
-                      right: -40,
-                      child: _bgCircle(180, Colors.white, 0.1),
-                    ),
-                    Positioned(
-                      bottom: -30,
-                      left: -30,
-                      child: _bgCircle(120, Colors.white, 0.08),
-                    ),
-                    // Discount badge
-                    Center(
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          const SizedBox(height: 40),
-                          Container(
+              background: promo.imageUrls.isNotEmpty
+                  // ── Image gallery header ──────────────────────────────────
+                  ? Stack(
+                      children: [
+                        Positioned.fill(
+                          child: PromoImageGallery(imageUrls: promo.imageUrls),
+                        ),
+                        // Discount badge overlaid at bottom-left (above dots)
+                        Positioned(
+                          bottom: 52,
+                          left: 16,
+                          child: Container(
                             padding: const EdgeInsets.symmetric(
-                                horizontal: 24, vertical: 12),
+                                horizontal: 14, vertical: 7),
                             decoration: BoxDecoration(
-                              color: Colors.white.withValues(alpha: 0.2),
+                              gradient: AppColors.primaryGradient,
                               borderRadius: BorderRadius.circular(20),
-                              border: Border.all(
-                                  color: Colors.white.withValues(alpha: 0.4)),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: AppColors.primary.withValues(alpha: 0.4),
+                                  blurRadius: 10,
+                                  offset: const Offset(0, 3),
+                                ),
+                              ],
                             ),
                             child: Text(
                               '-${promo.discount}%',
                               style: const TextStyle(
                                 color: Colors.white,
-                                fontSize: 48,
+                                fontSize: 20,
                                 fontWeight: FontWeight.w900,
-                                letterSpacing: -1,
+                                letterSpacing: -0.5,
                               ),
                             ),
                           ),
-                          const SizedBox(height: 8),
-                          if (promo.businessName != null)
-                            Text(
-                              promo.businessName!,
-                              style: TextStyle(
-                                color: Colors.white.withValues(alpha: 0.85),
-                                fontSize: 15,
-                                fontWeight: FontWeight.w600,
-                              ),
+                        ),
+                      ],
+                    )
+                  // ── Gradient header (no images) ───────────────────────────
+                  : Container(
+                      decoration: const BoxDecoration(
+                        gradient: AppColors.mainGradient,
+                      ),
+                      child: Stack(
+                        children: [
+                          Positioned(
+                            top: -40, right: -40,
+                            child: _bgCircle(180, Colors.white, 0.1),
+                          ),
+                          Positioned(
+                            bottom: -30, left: -30,
+                            child: _bgCircle(120, Colors.white, 0.08),
+                          ),
+                          Center(
+                            child: Column(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                const SizedBox(height: 40),
+                                Container(
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal: 24, vertical: 12),
+                                  decoration: BoxDecoration(
+                                    color: Colors.white.withValues(alpha: 0.2),
+                                    borderRadius: BorderRadius.circular(20),
+                                    border: Border.all(
+                                        color: Colors.white.withValues(alpha: 0.4)),
+                                  ),
+                                  child: Text(
+                                    '-${promo.discount}%',
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 48,
+                                      fontWeight: FontWeight.w900,
+                                      letterSpacing: -1,
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(height: 8),
+                                if (promo.businessName != null)
+                                  Text(
+                                    promo.businessName!,
+                                    style: TextStyle(
+                                      color: Colors.white.withValues(alpha: 0.85),
+                                      fontSize: 15,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                              ],
                             ),
+                          ),
                         ],
                       ),
                     ),
-                  ],
-                ),
-              ),
             ),
           ),
 
@@ -251,6 +311,32 @@ class _PromoDetailScreenState extends State<PromoDetailScreen> {
                       if (promo.category != null)
                         _badge(promo.category!, AppColors.primary),
                       _badge('${promo.used} utilisations', AppColors.success),
+                      // Expiration countdown badge
+                      Builder(builder: (_) {
+                        final countdown =
+                            PromoExpirationChecker.expirationCountdown(promo);
+                        if (countdown == null) return const SizedBox.shrink();
+                        final isExp = countdown == 'Expirée';
+                        return _badge(
+                          '⏳ $countdown',
+                          isExp ? AppColors.error : const Color(0xFFF97316),
+                        );
+                      }),
+                      // Remaining spots badge
+                      Builder(builder: (_) {
+                        final spotsLabel =
+                            PromoExpirationChecker.remainingSpotsLabel(promo);
+                        if (spotsLabel == null) return const SizedBox.shrink();
+                        final isFull = spotsLabel == 'Complet';
+                        return _badge(
+                          spotsLabel,
+                          isFull
+                              ? AppColors.error
+                              : PromoExpirationChecker.isAlmostFull(promo)
+                                  ? const Color(0xFF8B5CF6)
+                                  : AppColors.info,
+                        );
+                      }),
                     ],
                   ),
 
@@ -414,18 +500,6 @@ class _PromoDetailScreenState extends State<PromoDetailScreen> {
                     ),
                   ),
 
-                  const SizedBox(height: 10),
-                  _outlineBtn(
-                    label: 'Payer avec réduction',
-                    icon: Icons.payment_rounded,
-                    color: AppColors.success,
-                    onTap: () => Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                          builder: (_) => PaymentScreen(promo: promo)),
-                    ),
-                  ),
-
                   if (promo.businessName != null) ...[
                     const SizedBox(height: 10),
                     _outlineBtn(
@@ -467,12 +541,275 @@ class _PromoDetailScreenState extends State<PromoDetailScreen> {
                     ),
                   ),
 
+                  // ─── Comments & Reviews ───────────────────────────────────
+                  const SizedBox(height: 24),
+                  CommentSection(
+                    promoId:           promo.id,
+                    businessId:        promo.businessId,
+                    promoTitle:        promo.title,
+                    scrollToCommentId: widget.scrollToCommentId,
+                  ),
+
                   const SizedBox(height: 32),
                 ],
               ),
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  // ─── RESERVATION MODAL ────────────────────────────────────────────────────
+
+  void _showReservationModal(PromoModel promo) {
+    if (!promo.isEffectivelyActive) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Cette offre n\'est plus disponible.'),
+          backgroundColor: AppColors.error,
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+      return;
+    }
+    final nameCtrl    = TextEditingController();
+    final phoneCtrl   = TextEditingController();
+    final messageCtrl = TextEditingController();
+    final formKey     = GlobalKey<FormState>();
+    bool loading      = false;
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setLocal) {
+          final mq           = MediaQuery.of(ctx);
+          final keyboardH    = mq.viewInsets.bottom;
+          final maxSheetH    = mq.size.height * 0.90 - keyboardH;
+          return Padding(
+          padding: EdgeInsets.only(bottom: keyboardH),
+          child: Container(
+            constraints: BoxConstraints(maxHeight: maxSheetH.clamp(200.0, double.infinity)),
+            decoration: const BoxDecoration(
+              color: Colors.white,
+              borderRadius:
+                  BorderRadius.vertical(top: Radius.circular(28)),
+            ),
+            child: Form(
+              key: formKey,
+              autovalidateMode: AutovalidateMode.onUserInteraction,
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.fromLTRB(24, 16, 24, 32),
+                child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Center(
+                    child: Container(
+                      width: 40,
+                      height: 4,
+                      decoration: BoxDecoration(
+                        color: AppColors.border,
+                        borderRadius: BorderRadius.circular(2),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 20),
+
+                  Row(
+                    children: [
+                      Container(
+                        width: 44,
+                        height: 44,
+                        decoration: BoxDecoration(
+                          gradient: AppColors.primaryGradient,
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: const Icon(Icons.bookmark_add_rounded,
+                            color: Colors.white, size: 22),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text('Réserver cette offre',
+                                style: TextStyle(
+                                    color: AppColors.textDark,
+                                    fontSize: 18,
+                                    fontWeight: FontWeight.w800)),
+                            Text(promo.title,
+                                style: const TextStyle(
+                                    color: AppColors.textMuted,
+                                    fontSize: 13),
+                                overflow: TextOverflow.ellipsis),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 12, vertical: 8),
+                    decoration: BoxDecoration(
+                      color: AppColors.primaryLight,
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: const Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.schedule_rounded,
+                            color: AppColors.primary, size: 16),
+                        SizedBox(width: 6),
+                        Text('Valable 24h après confirmation',
+                            style: TextStyle(
+                                color: AppColors.primary,
+                                fontSize: 12,
+                                fontWeight: FontWeight.w600)),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 20),
+
+                  const RequiredLabel('Votre nom'),
+                  _modalField(nameCtrl, 'Votre nom',
+                      Icons.person_outline_rounded,
+                      validator: Validators.fullName),
+                  const SizedBox(height: 12),
+                  const RequiredLabel('Téléphone'),
+                  _modalField(
+                      phoneCtrl, 'Téléphone', Icons.phone_outlined,
+                      keyboard: TextInputType.phone,
+                      validator: Validators.phone),
+                  const SizedBox(height: 12),
+                  _modalField(messageCtrl, 'Message (optionnel)',
+                      Icons.message_outlined,
+                      maxLines: 2,
+                      validator: Validators.optionalMessage),
+                  const SizedBox(height: 24),
+
+                  GradientButton(
+                    label: loading
+                        ? 'Réservation en cours…'
+                        : 'Confirmer la réservation',
+                    icon: Icons.bookmark_added_rounded,
+                    loading: loading,
+                    onTap: loading
+                        ? null
+                        : () async {
+                            if (!formKey.currentState!.validate()) return;
+                            setLocal(() => loading = true);
+
+                            final uid = AuthService.currentUid;
+                            if (uid == null) return;
+
+                            try {
+                              final reservation =
+                                  await ReservationService.create(
+                                userId:     uid,
+                                promoId:    promo.id,
+                                promoTitle: promo.title,
+                                businessId: promo.businessId,
+                                userName:   nameCtrl.text.trim(),
+                                phone:      phoneCtrl.text.trim(),
+                                message:    messageCtrl.text.trim(),
+                              );
+                              await NotificationManager.reservationCreated(
+                                reservationId: reservation.id,
+                                promoTitle:    promo.title,
+                                expiresAt:     reservation.expiresAt,
+                              );
+
+                              if (ctx.mounted) Navigator.pop(ctx);
+                              if (mounted) {
+                                setState(() => _hasActiveReservation = true);
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(
+                                    content: const Row(
+                                      children: [
+                                        Icon(Icons.bookmark_added_rounded,
+                                            color: Colors.white),
+                                        SizedBox(width: 10),
+                                        Expanded(
+                                          child: Text(
+                                            'Réservation confirmée ! Valable 24h.',
+                                            style: TextStyle(
+                                                fontWeight:
+                                                    FontWeight.w600),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                    backgroundColor: AppColors.success,
+                                    behavior: SnackBarBehavior.floating,
+                                    shape: RoundedRectangleBorder(
+                                        borderRadius:
+                                            BorderRadius.circular(14)),
+                                    duration: const Duration(seconds: 4),
+                                  ),
+                                );
+                              }
+                            } catch (e) {
+                              AppErrorHandler.log('Reservation.create', e);
+                              if (ctx.mounted) {
+                                setLocal(() => loading = false);
+                                AppErrorHandler.showError(ctx, e,
+                                    logContext: 'Reservation.create');
+                              }
+                            }
+                          },
+                  ),
+                ],
+                ), // Column
+              ), // SingleChildScrollView
+            ), // Form
+          ), // Container
+        ); // return Padding
+        }, // StatefulBuilder block
+      ), // StatefulBuilder
+    ).whenComplete(() {
+      nameCtrl.dispose();
+      phoneCtrl.dispose();
+      messageCtrl.dispose();
+    });
+  }
+
+  Widget _modalField(
+    TextEditingController ctrl,
+    String hint,
+    IconData icon, {
+    TextInputType? keyboard,
+    int maxLines = 1,
+    String? Function(String?)? validator,
+  }) {
+    return Container(
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: AppColors.border),
+      ),
+      child: TextFormField(
+        controller: ctrl,
+        maxLines: maxLines,
+        keyboardType: keyboard,
+        validator: validator,
+        style:
+            const TextStyle(color: AppColors.textDark, fontSize: 14),
+        decoration: InputDecoration(
+          prefixIcon:
+              Icon(icon, color: AppColors.textLight, size: 18),
+          hintText: hint,
+          hintStyle: const TextStyle(
+              color: AppColors.textLight, fontSize: 14),
+          border: InputBorder.none,
+          contentPadding: const EdgeInsets.symmetric(
+              horizontal: 16, vertical: 14),
+          errorStyle: const TextStyle(color: AppColors.error),
+        ),
       ),
     );
   }
@@ -683,6 +1020,120 @@ class _QrCardState extends State<_QrCard> {
               ),
             ],
           ],
+        ),
+      ),
+    );
+  }
+}
+
+// ─── STICKY RESERVATION BAR ───────────────────────────────────────────────────
+
+class _StickyReservationBar extends StatelessWidget {
+  final PromoModel promo;
+  final bool       hasActiveReservation;
+  final VoidCallback onReserve;
+
+  const _StickyReservationBar({
+    required this.promo,
+    required this.hasActiveReservation,
+    required this.onReserve,
+  });
+
+  String get _label {
+    if (hasActiveReservation) { return 'Déjà réservée ✓'; }
+    if (promo.isExpired || promo.status == PromoStatus.expired) {
+      return 'Offre expirée';
+    }
+    if (promo.isLimitReached) { return 'Offre complète'; }
+    if (!promo.isEffectivelyActive) { return 'Non disponible'; }
+    return 'Réserver cette offre';
+  }
+
+  IconData get _icon {
+    if (hasActiveReservation) { return Icons.bookmark_added_rounded; }
+    if (!promo.isEffectivelyActive || promo.isLimitReached) {
+      return Icons.block_rounded;
+    }
+    return Icons.bookmark_add_rounded;
+  }
+
+  bool get _canReserve =>
+      !hasActiveReservation && promo.isEffectivelyActive && !promo.isLimitReached;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        border: const Border(top: BorderSide(color: AppColors.border)),
+        boxShadow: [
+          BoxShadow(
+            color: AppColors.primary.withValues(alpha: 0.10),
+            blurRadius: 20,
+            offset: const Offset(0, -4),
+          ),
+        ],
+      ),
+      child: SafeArea(
+        top: false,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 12, 20, 16),
+          child: _canReserve
+              ? GestureDetector(
+                  onTap: onReserve,
+                  child: Container(
+                    height: 54,
+                    decoration: BoxDecoration(
+                      gradient: AppColors.primaryGradient,
+                      borderRadius: BorderRadius.circular(16),
+                      boxShadow: AppColors.primaryShadow,
+                    ),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(_icon, color: Colors.white, size: 20),
+                        const SizedBox(width: 10),
+                        Text(
+                          _label,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 15,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                )
+              : Container(
+                  height: 54,
+                  decoration: BoxDecoration(
+                    color: AppColors.surface,
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(color: AppColors.border),
+                  ),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(_icon,
+                          color: hasActiveReservation
+                              ? AppColors.success
+                              : AppColors.textMuted,
+                          size: 20),
+                      const SizedBox(width: 10),
+                      Text(
+                        _label,
+                        style: TextStyle(
+                          color: hasActiveReservation
+                              ? AppColors.success
+                              : AppColors.textMuted,
+                          fontSize: 15,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
         ),
       ),
     );

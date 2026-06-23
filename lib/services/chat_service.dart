@@ -1,6 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../models/chat_model.dart';
 import '../models/message_model.dart';
+import '../utils/list_extensions.dart';
 
 class ChatService {
   static final _db = FirebaseFirestore.instance;
@@ -69,14 +70,7 @@ class ChatService {
         .snapshots()
         .map((snap) {
           final list = snap.docs.map(ChatModel.fromDocument).toList();
-          list.sort((a, b) {
-            final ta = a.lastMessageAt;
-            final tb = b.lastMessageAt;
-            if (ta == null && tb == null) return 0;
-            if (ta == null) return 1;
-            if (tb == null) return -1;
-            return tb.compareTo(ta);
-          });
+          list.sortByDate((c) => c.lastMessageAt);
           return list;
         });
   }
@@ -87,14 +81,7 @@ class ChatService {
         .snapshots()
         .map((snap) {
           final list = snap.docs.map(ChatModel.fromDocument).toList();
-          list.sort((a, b) {
-            final ta = a.lastMessageAt;
-            final tb = b.lastMessageAt;
-            if (ta == null && tb == null) return 0;
-            if (ta == null) return 1;
-            if (tb == null) return -1;
-            return tb.compareTo(ta);
-          });
+          list.sortByDate((c) => c.lastMessageAt);
           return list;
         });
   }
